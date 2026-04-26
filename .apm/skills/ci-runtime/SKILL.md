@@ -1,11 +1,11 @@
 ---
-name: ci
-description: Reusable CI infrastructure — signoff (commit status posting), multisystem build (git bundle + SSH), log capture, orchestration protocol. Project CI skills delegate to these primitives.
+name: ci-runtime
+description: Reusable CI infrastructure — signoff (commit status posting), multisystem build (git bundle + SSH), log capture, orchestration protocol. The project's own `ci` skill delegates to these primitives; do not invoke this directly.
 ---
 
-# CI
+# CI Runtime
 
-Reusable infrastructure for project CI skills. A project's own `ci` skill defines its steps inline; this skill defines how to run them, post statuses, route remote work, and capture logs.
+Reusable infrastructure for project CI skills. A project's own `ci` skill (deployed at `.claude/skills/ci/SKILL.md`) defines its steps inline; this skill defines how to run them, post statuses, route remote work, and capture logs.
 
 ## Primitives
 
@@ -38,4 +38,4 @@ Branch protection pins literal context strings. Use the canonical step name from
 
 ## Authoring a project CI skill
 
-Write `.claude/skills/ci/SKILL.md` in your project. List your steps in markdown — name, command, optional `depends_on`, optional `system`. Reference this skill for the protocol. The SKILL.md *is* the manifest; no separate config file.
+Write `.apm/skills/ci/SKILL.md` in your project (deploys to `.claude/skills/ci/SKILL.md` via apm). List your steps in markdown — name, command, optional `depends_on`, optional `system`. Reference this `ci-runtime` skill for the protocol. The SKILL.md *is* the manifest; no separate config file.

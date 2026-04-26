@@ -16,8 +16,8 @@ dependencies:
 
 `apm install` deploys:
 
-- `.claude/skills/ci/SKILL.md` — protocol + primitives doc (read by your project's CI skill)
-- `.claude/hooks/ci/scripts/ci-{status,ssh,log,preflight,verify}` — the shims
+- `.claude/skills/ci-runtime/SKILL.md` — protocol + primitives doc (read by your project's CI skill). Named `ci-runtime` so it doesn't collide with your project's own `ci` skill.
+- `.claude/hooks/ci/scripts/ci-{status,ssh,log,preflight,verify}` — the shims.
 
 Requires `gh` (authenticated), `git`, `jq`, `ssh` on PATH.
 
@@ -39,4 +39,4 @@ GitHub today via `gh`. Bitbucket support will land as an internal branch in `ci-
 
 ## Authoring a project CI skill
 
-See `.apm/skills/ci/SKILL.md` for the full protocol. Short version: write `.claude/skills/ci/SKILL.md` in your project, list your steps in markdown (name, command, optional `depends_on`, optional `system`), and follow the orchestration protocol from this skill. The SKILL.md *is* the manifest — no separate config file.
+See `.apm/skills/ci-runtime/SKILL.md` for the full protocol. Short version: write `.apm/skills/ci/SKILL.md` in your project (deploys to `.claude/skills/ci/SKILL.md`), list your steps in markdown (name, command, optional `depends_on`, optional `system`), and follow the orchestration protocol from `ci-runtime`. The SKILL.md *is* the manifest — no separate config file.
