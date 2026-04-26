@@ -9,7 +9,7 @@ Reusable infrastructure for project CI skills. A project's own `ci` skill (deplo
 
 ## Primitives
 
-Shims live at `.claude/hooks/ci/scripts/` after `apm install`. All read `$CI_SHA` if exported (set it once from `ci-preflight` so every shim sees the same sha for the whole run).
+Shims live at `.claude/skills/ci-runtime/scripts/` after `apm install`. All read `$CI_SHA` if exported (set it once from `ci-preflight` so every shim sees the same sha for the whole run).
 
 - **`ci-status <step> <pending|success|failure|error> [description]`** — post a commit status via the configured forge. GitHub today; Bitbucket via the same shim later. Always use this; never call `gh api` directly.
 - **`ci-ssh <system> <cmd…>`** — git-bundle the repo at the captured sha, ship to the target host, run `cmd`, stream output, clean up. System→host map lives in `~/.config/ci/hosts.json` (prompted + cached on first use per system).

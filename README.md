@@ -14,10 +14,10 @@ dependencies:
     - juspay/ci#main
 ```
 
-`apm install` deploys:
+`apm install` deploys the whole skill folder to `.claude/skills/ci-runtime/`:
 
-- `.claude/skills/ci-runtime/SKILL.md` — protocol + primitives doc (read by your project's CI skill). Named `ci-runtime` so it doesn't collide with your project's own `ci` skill.
-- `.claude/hooks/ci/scripts/ci-{status,ssh,log,preflight,verify}` — the shims.
+- `SKILL.md` — protocol + primitives doc (read by your project's CI skill). Named `ci-runtime` so it doesn't collide with your project's own `ci` skill.
+- `scripts/ci-{status,ssh,log,preflight,verify}` — the shims.
 
 Requires `gh` (authenticated), `git`, `jq`, `ssh` on PATH.
 
