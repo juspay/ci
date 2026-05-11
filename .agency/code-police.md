@@ -41,3 +41,19 @@ _Anti-patterns_:
 
 - Hand-writing `parseJSON = withObject "X" $ \o -> X <$> o .: "name" <*> o .: "age"` when the field names match. That's the literal contract Generic already gives you.
 - Squashing nested objects at parse time. The parser shouldn't do projection work; it should mirror the wire format, with a separate function doing the unwrap.
+
+## module-needs-description
+
+Every `.hs` module must carry a top-level Haddock comment naming what the module is for — a single sentence is fine. This is documentation of the module's concern, not commentary on the code (the `comments-only-for-non-obvious` rule still applies inside the body).
+
+_How to apply_:
+
+- Place `-- | <one-line description>` immediately above the `module` declaration.
+- For multi-line descriptions, use a `{-| ... -}` block.
+- The sentence should be the same answer you'd give to `one-module-one-concern` — "this module is for X". If you can't write that sentence, the module is doing too much.
+
+_Anti-patterns_:
+
+- Restating the module name: `-- | The Main module.`
+- Listing exports: `-- | Exports foo, bar, baz.`
+- Narrating the diff: `-- | Added in PR #2 for the just-graph feature.`
