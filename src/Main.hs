@@ -8,7 +8,7 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import CI.Graph (reachable)
-import CI.Justfile (Recipe (..), fetchDump)
+import CI.Justfile (fetchDump, recipeDeps)
 import System.Exit (die)
 
 main :: IO ()

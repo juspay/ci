@@ -1,13 +1,17 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module CI.Justfile (Recipe (..), fetchDump) where
+module CI.Justfile (Recipe, recipeDeps, fetchDump) where
 
-import Data.Aeson (FromJSON (..), eitherDecodeStrict, withObject, (.:))
+import Data.Aeson (FromJSON, eitherDecodeStrict)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
+import GHC.Generics (Generic)
 import System.Exit (die)
 import System.Process (readProcess)
 import System.Which (staticWhich)
@@ -15,16 +19,20 @@ import System.Which (staticWhich)
 justBin :: FilePath
 justBin = $(staticWhich "just")
 
-newtype Recipe = Recipe {recipeDeps :: [Text]}
+newtype Dep = Dep {recipe :: Text}
+  deriving stock (Generic)
+  deriving anyclass (FromJSON)
 
-instance FromJSON Recipe where
-  parseJSON = withObject "Recipe" $ \o ->
-    Recipe <$> (mapM (withObject "Dep" (.: "recipe")) =<< o .: "dependencies")
+newtype Recipe = Recipe {dependencies :: [Dep]}
+  deriving stock (Generic)
+  deriving anyclass (FromJSON)
 
-newtype Dump = Dump (Map.Map Text Recipe)
+newtype Dump = Dump {recipes :: Map.Map Text Recipe}
+  deriving stock (Generic)
+  deriving anyclass (FromJSON)
 
-instance FromJSON Dump where
-  parseJSON = withObject "Dump" $ \o -> Dump <$> o .: "recipes"
+recipeDeps :: Recipe -> [Text]
+recipeDeps = map recipe . dependencies
 
 fetchDump :: IO (Map.Map Text Recipe)
 fetchDump = do
