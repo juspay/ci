@@ -57,3 +57,36 @@ _Anti-patterns_:
 - Restating the module name: `-- | The Main module.`
 - Listing exports: `-- | Exports foo, bar, baz.`
 - Narrating the diff: `-- | Added in PR #2 for the just-graph feature.`
+
+## no-partial-functions
+
+Don't reach for functions that can crash on a value of the correct type — `head`, `tail`, `init`, `last`, `fromJust`, `(!!)`, `read`, `Map.!`, `error`, `undefined` — when a total alternative exists. Non-exhaustive pattern matches fall under the same rule: every `case` covers every constructor (use `_` deliberately if you mean "I don't care").
+
+_How to apply_:
+
+- Need the first element? Pattern-match (`x : _`) or take `NonEmpty` and use `Data.List.NonEmpty.head`. Not `Data.List.head`.
+- Looking up a `Map` key? `Map.lookup` (returns `Maybe`) or `Map.findWithDefault`. Not `Map.!`.
+- Parsing text? `Text.Read.readMaybe`. Not `read`.
+- `error`/`undefined` are reserved for invariants the type system can't express. Not for invalid input — that's an `Either`.
+
+_Anti-patterns_:
+
+- `head xs` where `xs` could be empty. Bake the non-emptiness into the type (`NonEmpty`) or pattern-match.
+- `case x of Just y -> y` with no `Nothing` branch — `fromJust` in disguise.
+- `error "shouldn't happen"` instead of refactoring so the impossibility is typed away (parameterize over the constraining type, or split the function).
+
+## propagate-errors-via-either
+
+Expected, recoverable failures flow through `Either e a` (or `m a` constrained by `MonadError e m`), not into `die`/`error`/`undefined`/`throwIO` deep in the call graph. The boundary — usually `main` or a request handler — is the only place that converts the `Either` to an exit code, log line, or HTTP response.
+
+_How to apply_:
+
+- A function that can fail for an *expected* reason (parse error, missing key, validation, schema mismatch) returns `Either e a` (pure) or `m a` for `MonadError e m` (stack).
+- IO actions that can meaningfully fail return `IO (Either e a)` rather than throwing — caller decides whether to die or recover.
+- Top-level entry points consume the `Either` once and translate to the appropriate side effect (`die`, `respond 4xx`, etc.).
+
+_Anti-patterns_:
+
+- `loadConfig :: IO Config` that `die`s on a parse failure. Caller can't see this can fail, can't recover, can't write a retry. Should be `IO (Either String Config)`.
+- Catching an exception and rethrowing as `error "..."` — that's renaming a partial function, not fixing it.
+- `fromRight (error "won't happen") result` — same partial function wearing a hat.
