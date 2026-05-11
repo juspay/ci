@@ -4,3 +4,10 @@
 
 # APM dependencies
 apm_modules/
+
+# Nix
+result
+result-*
+
+# Cabal
+dist-newstyle/
