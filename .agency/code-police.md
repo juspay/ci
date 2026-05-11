@@ -26,3 +26,18 @@ _Anti-patterns_:
 
 - One file holding: schema types + FromJSON instances + Template-Haskell binary lookup + BFS algorithm + JSON re-emitter + `main`. Each is a different rate of change.
 - A `Utils.hs` / `Common.hs` that grows by accretion. If you can't name its single concern, it's a dumping ground.
+
+## prefer-aeson-auto-derive
+
+Default to Generic-based auto-derivation (`deriving stock Generic` + `deriving anyclass FromJSON`/`ToJSON`) for JSON parsers. Hand-write `parseJSON`/`toJSON` only when auto-derivation genuinely can't express the mapping — and even then, reach for `genericParseJSON` with an `Options { fieldLabelModifier = ... }` before falling back to `withObject` + `(.:)`.
+
+_How to apply_:
+
+- Use `deriving stock Generic` + `deriving anyclass FromJSON` (or `ToJSON`) and let aeson read the field names directly off the record.
+- If the JSON keys differ from the Haskell field names, use `genericParseJSON` with an `Options { fieldLabelModifier = ... }` modifier. Still derives — just with a transform.
+- Mirror the JSON structure as Haskell records; if the on-the-wire shape is nested, mirror that, then write a `data` → `data` projection function. The parser stays generic; the projection stays explicit.
+
+_Anti-patterns_:
+
+- Hand-writing `parseJSON = withObject "X" $ \o -> X <$> o .: "name" <*> o .: "age"` when the field names match. That's the literal contract Generic already gives you.
+- Squashing nested objects at parse time. The parser shouldn't do projection work; it should mirror the wire format, with a separate function doing the unwrap.
