@@ -4,9 +4,6 @@
 module Main where
 
 import Data.Aeson (FromJSON (..), eitherDecode, encode, withObject, (.:))
-import qualified Data.Aeson as A
-import qualified Data.Aeson.Key as K
-import qualified Data.Aeson.KeyMap as KM
 import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -25,18 +22,18 @@ instance FromJSON Recipe where
   parseJSON = withObject "Recipe" $ \o ->
     Recipe <$> (mapM (withObject "Dep" (.: "recipe")) =<< o .: "dependencies")
 
-data Parsed = Parsed {parsedRaw :: A.Object, parsedGraph :: Map.Map Text Recipe}
+newtype Dump = Dump {dumpRecipes :: Map.Map Text Recipe}
 
-instance FromJSON Parsed where
-  parseJSON = withObject "Dump" $ \o -> Parsed o <$> o .: "recipes"
+instance FromJSON Dump where
+  parseJSON = withObject "Dump" $ \o -> Dump <$> o .: "recipes"
 
 main :: IO ()
 main = do
   let root = "ci" :: Text
   raw <- BL.pack <$> readProcess justBin ["--dump", "--dump-format", "json"] ""
-  Parsed top g <- either die pure (eitherDecode raw)
+  Dump g <- either die pure (eitherDecode raw)
   reach <- either die pure (reachable root g)
-  BL.putStrLn (encode (filterRecipes reach top))
+  BL.putStrLn (encode (adjacency reach g))
 
 reachable :: Text -> Map.Map Text Recipe -> Either String (Set.Set Text)
 reachable root g
@@ -51,9 +48,5 @@ bfs next = go Set.empty
       | Set.member x seen = go seen xs
       | otherwise = go (Set.insert x seen) (next x <> xs)
 
-filterRecipes :: Set.Set Text -> A.Object -> A.Object
-filterRecipes keep obj = case KM.lookup "recipes" obj of
-  Just (A.Object r) ->
-    let r' = KM.filterWithKey (\k _ -> Set.member (K.toText k) keep) r
-     in KM.insert "recipes" (A.Object r') obj
-  _ -> obj
+adjacency :: Set.Set Text -> Map.Map Text Recipe -> Map.Map Text [Text]
+adjacency keep g = recipeDeps <$> Map.restrictKeys g keep
