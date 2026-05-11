@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Entry point: print the dependency adjacency reachable from @just ci@.
 module Main where
 
 import Data.Aeson.Encode.Pretty (encodePretty)

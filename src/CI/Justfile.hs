@@ -4,6 +4,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
+-- | Bindings for the @just@ CLI and its @--dump --dump-format json@ schema.
 module CI.Justfile (Recipe, recipeDeps, fetchDump) where
 
 import Data.Aeson (FromJSON, eitherDecodeStrict)
