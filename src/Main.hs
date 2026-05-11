@@ -3,13 +3,14 @@
 
 module Main where
 
-import Data.Aeson (FromJSON (..), eitherDecode, withObject, (.:))
+import Data.Aeson (FromJSON (..), eitherDecodeStrict, withObject, (.:))
 import Data.Aeson.Encode.Pretty (encodePretty)
 import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import System.Exit (die)
 import System.Process (readProcess)
 import System.Which (staticWhich)
@@ -23,7 +24,7 @@ instance FromJSON Recipe where
   parseJSON = withObject "Recipe" $ \o ->
     Recipe <$> (mapM (withObject "Dep" (.: "recipe")) =<< o .: "dependencies")
 
-newtype Dump = Dump {dumpRecipes :: Map.Map Text Recipe}
+newtype Dump = Dump (Map.Map Text Recipe)
 
 instance FromJSON Dump where
   parseJSON = withObject "Dump" $ \o -> Dump <$> o .: "recipes"
@@ -31,8 +32,8 @@ instance FromJSON Dump where
 main :: IO ()
 main = do
   let root = "ci" :: Text
-  raw <- BL.pack <$> readProcess justBin ["--dump", "--dump-format", "json"] ""
-  Dump g <- either die pure (eitherDecode raw)
+  raw <- TE.encodeUtf8 . T.pack <$> readProcess justBin ["--dump", "--dump-format", "json"] ""
+  Dump g <- either die pure (eitherDecodeStrict raw)
   reach <- either die pure (reachable root g)
   BL.putStrLn (encodePretty (adjacency reach g))
 
