@@ -13,7 +13,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
-import System.Exit (die)
 import System.Process (readProcess)
 import System.Which (staticWhich)
 
@@ -35,8 +34,7 @@ newtype Dump = Dump {recipes :: Map.Map Text Recipe}
 recipeDeps :: Recipe -> [Text]
 recipeDeps = map recipe . dependencies
 
-fetchDump :: IO (Map.Map Text Recipe)
+fetchDump :: IO (Either String (Map.Map Text Recipe))
 fetchDump = do
   raw <- TE.encodeUtf8 . T.pack <$> readProcess justBin ["--dump", "--dump-format", "json"] ""
-  Dump g <- either die pure (eitherDecodeStrict raw)
-  pure g
+  pure (recipes <$> eitherDecodeStrict raw)

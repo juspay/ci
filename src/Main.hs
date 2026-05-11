@@ -13,7 +13,6 @@ import System.Exit (die)
 main :: IO ()
 main = do
   let root = "ci" :: Text
-  g <- fetchDump
-  case reachableAdjacency root g of
-    Left e -> die e
-    Right adj -> BL.putStrLn (encodePretty adj)
+  g <- either die pure =<< fetchDump
+  adj <- either die pure (reachableAdjacency root g)
+  BL.putStrLn (encodePretty adj)
