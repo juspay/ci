@@ -15,6 +15,7 @@ executable ci
     build-depends:
         , aeson
         , aeson-pretty
+        , algebraic-graphs
         , base
         , bytestring
         , containers
