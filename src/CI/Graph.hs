@@ -1,4 +1,4 @@
-module Graph (reachable) where
+module CI.Graph (reachable) where
 
 import qualified Data.Set as Set
 

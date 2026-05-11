@@ -10,8 +10,8 @@ common warnings
 executable ci
     import:           warnings
     main-is:          Main.hs
-    other-modules:    Graph
-                      Justfile
+    other-modules:    CI.Graph
+                      CI.Justfile
     build-depends:
         , aeson
         , aeson-pretty

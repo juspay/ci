@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Justfile (Recipe (..), fetchDump) where
+module CI.Justfile (Recipe (..), fetchDump) where
 
 import Data.Aeson (FromJSON (..), eitherDecodeStrict, withObject, (.:))
 import qualified Data.Map.Strict as Map

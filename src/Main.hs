@@ -7,8 +7,8 @@ import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
-import Graph (reachable)
-import Justfile (Recipe (..), fetchDump)
+import CI.Graph (reachable)
+import CI.Justfile (Recipe (..), fetchDump)
 import System.Exit (die)
 
 main :: IO ()
