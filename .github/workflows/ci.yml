@@ -7,9 +7,8 @@ on:
 
 jobs:
   build:
-    runs-on: [self-hosted, x86_64-linux]
+    runs-on: x86_64-linux
     steps:
       - uses: actions/checkout@v4
-      - run: nix build --print-build-logs
-      - run: nix run . | tee /tmp/out
-      - run: grep "Hello, World!" /tmp/out
+      - run: nix develop -c just build
+      - run: nix develop -c just run-check

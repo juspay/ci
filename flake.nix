@@ -13,6 +13,9 @@
           pkgs = nixpkgs.legacyPackages.${system};
           project = (haskell-flake.lib { inherit pkgs; }).evalHaskellProject {
             projectRoot = self;
+            modules = [{
+              devShell.mkShellArgs.nativeBuildInputs = [ pkgs.just ];
+            }];
           };
         in
         {
