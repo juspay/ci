@@ -5,7 +5,7 @@ Project hooks for the `do` skill.
 ## Check command
 
 ```sh
-nix build --print-build-logs
+nix develop -c cabal build
 ```
 
 ## Test command
