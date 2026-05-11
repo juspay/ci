@@ -3,7 +3,8 @@
 
 module Main where
 
-import Data.Aeson (FromJSON (..), eitherDecode, encode, withObject, (.:))
+import Data.Aeson (FromJSON (..), eitherDecode, withObject, (.:))
+import Data.Aeson.Encode.Pretty (encodePretty)
 import qualified Data.ByteString.Lazy.Char8 as BL
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -33,7 +34,7 @@ main = do
   raw <- BL.pack <$> readProcess justBin ["--dump", "--dump-format", "json"] ""
   Dump g <- either die pure (eitherDecode raw)
   reach <- either die pure (reachable root g)
-  BL.putStrLn (encode (adjacency reach g))
+  BL.putStrLn (encodePretty (adjacency reach g))
 
 reachable :: Text -> Map.Map Text Recipe -> Either String (Set.Set Text)
 reachable root g
