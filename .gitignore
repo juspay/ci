@@ -11,3 +11,5 @@ result-*
 
 # Cabal
 dist-newstyle/
+
+/.worktrees
