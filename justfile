@@ -1,9 +1,11 @@
 default:
     @just --list
 
+ci: build run-check
+
 build:
     nix build --print-build-logs
 
-run-check:
+run-check: build
     nix run . | tee /tmp/ci-out
-    grep "Hello, World!" /tmp/ci-out
+    grep -q '"ci"' /tmp/ci-out
