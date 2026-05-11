@@ -10,5 +10,6 @@ jobs:
     runs-on: x86_64-linux
     steps:
       - uses: actions/checkout@v4
-      - run: nix develop -c just build
-      - run: nix develop -c just run-check
+      - uses: extractions/setup-just@v2
+      - run: just build
+      - run: just run-check
