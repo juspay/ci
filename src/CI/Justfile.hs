@@ -110,6 +110,12 @@ osFromText = flip lookup osTable
         ("dragonfly", Dragonfly)
       ]
 
+-- | Hand-rolled because aeson's default externally-tagged encoding can't model just's
+-- mixed bare-string-and-single-key-object @attributes@ array (we want @'Os' 'Linux'@ to
+-- decode from the flattened @"linux"@, not @{"os":"linux"}@). Equations dispatch
+-- concrete to general: literal @"parallel"@, then OS strings via 'osFromText', then the
+-- @metadata@ single-key object; the final wildcard preserves anything unknown as
+-- 'Other' rather than rejecting it — open-world by design, see 'Attribute'.
 instance FromJSON Attribute where
   parseJSON (String "parallel") = pure Parallel
   parseJSON (String t) | Just os <- osFromText t = pure (Os os)
