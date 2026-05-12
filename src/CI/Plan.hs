@@ -8,10 +8,13 @@
 module CI.Plan
   ( RunSpec (..),
     Plan,
+    planFromRoot,
     planFromRecipes,
   )
 where
 
+import qualified Algebra.Graph.AdjacencyMap as G
+import CI.Graph (ReachError, reachableSubgraph)
 import CI.Justfile (Attribute (..), Recipe (..), RecipeName, recipeDeps)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -33,8 +36,17 @@ data RunSpec = RunSpec
 -- | The whole plan: every recipe in the reachable subgraph, keyed by name.
 type Plan = Map.Map RecipeName RunSpec
 
--- | Build a 'Plan' from the decoded justfile. Caller has already narrowed to
--- the reachable subgraph if desired.
+-- | One-stop entry point: from a decoded justfile and a root recipe, narrow
+-- to the reachable subgraph and translate to a 'Plan'. Hides the
+-- reach-then-restrict-then-translate sequence so callers don't reproduce
+-- it. Fails with 'ReachError' if @root@ is absent.
+planFromRoot :: RecipeName -> Map.Map RecipeName Recipe -> Either ReachError Plan
+planFromRoot root recipes = do
+  subgraph <- reachableSubgraph root (fmap recipeDeps recipes)
+  pure $ planFromRecipes (Map.restrictKeys recipes (G.vertexSet subgraph))
+
+-- | Build a 'Plan' from a recipe map without narrowing. Most callers want
+-- 'planFromRoot'; this is the lower-level building block.
 planFromRecipes :: Map.Map RecipeName Recipe -> Plan
 planFromRecipes = fmap toSpec
   where

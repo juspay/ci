@@ -15,7 +15,7 @@ import qualified Algebra.Graph.AdjacencyMap as G
 import CI.Executor (exec)
 import CI.Graph (reachableSubgraph)
 import CI.Justfile (Recipe, RecipeName, fetchDump, recipeDeps)
-import CI.Plan (planFromRecipes)
+import CI.Plan (planFromRoot)
 import CI.Scheduler (runPlan)
 import qualified CI.Sinks as Sinks
 import Data.Aeson.Encode.Pretty (encodePretty)
@@ -47,8 +47,7 @@ printGraph root = do
 runRecipe :: RecipeName -> IO ()
 runRecipe root = do
   recipes <- fetchOrDie
-  subgraph <- subgraphOrDie root recipes
-  let plan = planFromRecipes (Map.restrictKeys recipes (G.vertexSet subgraph))
+  plan <- either (die . T.unpack . display) pure (planFromRoot root recipes)
   liveTail <- Sinks.newLiveTail stderr
   let sinks =
         Sinks.Sinks
