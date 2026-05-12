@@ -15,5 +15,5 @@ main :: IO ()
 main = do
   let root = "ci" :: RecipeName
   g <- either (die . T.unpack . displayFetchError) pure =<< fetchDump
-  subgraph <- either (die . T.unpack . displayReachError) pure (reachableSubgraph root g)
-  BL.putStrLn (encodePretty (G.adjacencyMap subgraph))
+  subgraph <- either (die . T.unpack . displayReachError) pure $ reachableSubgraph root g
+  BL.putStrLn $ encodePretty $ G.adjacencyMap subgraph

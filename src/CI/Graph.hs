@@ -34,12 +34,12 @@ reachableSubgraph :: RecipeName -> Map.Map RecipeName Recipe -> Either ReachErro
 reachableSubgraph root g
   -- Reject missing roots up front; G.reachable on an absent vertex
   -- silently returns [root], which would yield a one-vertex graph.
-  | Map.notMember root g = Left (MissingRecipe root)
-  | otherwise = Right (G.induce (`Set.member` keep) recipeGraph)
+  | Map.notMember root g = Left $ MissingRecipe root
+  | otherwise = Right $ G.induce (`Set.member` keep) recipeGraph
   where
     recipeGraph =
       G.stars
         [ (name, [d.recipe | d <- r.dependencies])
           | (name, r) <- Map.toList g
         ]
-    keep = Set.fromList (G.reachable recipeGraph root)
+    keep = Set.fromList $ G.reachable recipeGraph root

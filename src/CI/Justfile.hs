@@ -93,4 +93,4 @@ displayFetchError (FetchParseError msg) = "failed to decode just dump: " <> T.pa
 fetchDump :: IO (Either FetchError (Map.Map RecipeName Recipe))
 fetchDump = do
   raw <- TE.encodeUtf8 . T.pack <$> readProcess justBin ["--dump", "--dump-format", "json"] ""
-  pure (bimap FetchParseError (\d -> d.recipes) (eitherDecodeStrict @Dump raw))
+  pure $ bimap FetchParseError (\d -> d.recipes) (eitherDecodeStrict @Dump raw)
