@@ -6,8 +6,10 @@
 -- once across the whole invocation, mirroring just's "a dep mentioned by
 -- multiple parents only fires once" rule. Deps fan out concurrently iff the
 -- parent recipe carries 'parallelDeps'; otherwise they run in declaration
--- order. A dep failure (non-zero 'ExitCode') short-circuits the parent —
--- under fanout, sibling asyncs are cancelled automatically.
+-- order. Failure semantics are direction-specific: a sequential dep failure
+-- short-circuits the remaining siblings, while parallel siblings all run to
+-- completion and the first non-success exit code wins. Either way the
+-- parent recipe's body is skipped if any dep failed.
 module CI.Scheduler
   ( runPlan,
     Exec,
