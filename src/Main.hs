@@ -4,15 +4,14 @@
 module Main where
 
 import CI.Graph (reachableAdjacency)
-import CI.Justfile (fetchDump)
+import CI.Justfile (RecipeName (..), fetchDump)
 import Data.Aeson.Encode.Pretty (encodePretty)
 import qualified Data.ByteString.Lazy.Char8 as BL
-import Data.Text (Text)
 import System.Exit (die)
 
 main :: IO ()
 main = do
-  let root = "ci" :: Text
+  let root = RecipeName "ci"
   g <- either die pure =<< fetchDump
   adj <- either die pure (reachableAdjacency root g)
   BL.putStrLn (encodePretty adj)
