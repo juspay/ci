@@ -91,11 +91,15 @@ Domain identifiers and values typed as `Text`/`String` should be wrapped in newt
 
 _How to apply_:
 
-- Wrap each domain concept in a `newtype RecipeName = RecipeName { unRecipeName :: Text }` (or similar). Derive `Eq`, `Ord`, `FromJSON`/`ToJSON`, and — for newtypes used as `Map` keys — `FromJSONKey`/`ToJSONKey` via `deriving newtype`, so the runtime cost is zero.
-- Export the unwrapper alongside the constructor when callers genuinely need the inner string (for display, formatting, or passing to a string-only API).
-- Refactor signatures from `Text -> Map Text Foo -> Map Text [Text]` to `Name -> Map Name Foo -> Map Name [Name]` so the compiler can catch swapped parameters.
+- Wrap each domain concept in a positional `newtype RecipeName = RecipeName Text` (no field accessor). Derive `Eq`, `Ord`, `FromJSON`/`ToJSON`, and — for newtypes used as `Map` keys — `FromJSONKey`/`ToJSONKey` via `deriving newtype`. Runtime cost is zero.
+- Derive `IsString` so callers construct from string literals: `"ci" :: RecipeName` with `OverloadedStrings`. That's the `fromString` half.
+- Derive `Show` newtype-style for debugging and error messages — the underlying type's `Show` (e.g. Text's `"ci"`) is good enough. For richer display, define a `Display` typeclass; don't export an ad-hoc unwrapper.
+- **Keep the constructor unexported.** External modules go through `IsString`/`Show`/`FromJSON` — never via a raw accessor. The whole point of the newtype is that the type-laundering API doesn't exist.
+- Refactor signatures from `Text -> Map Text Foo -> Map Text [Text]` to `Name -> Map Name Foo -> Map Name [Name]` so the compiler catches swapped parameters.
 
 _Anti-patterns_:
 
-- `f :: Text -> Map Text Foo -> Either Text Bar` where the three `Text`s mean different things. The reader has to guess; the compiler can't help.
-- A `String` filepath, URL, ID, or token threaded through several functions as a plain `String`. If it has a domain meaning, it has a newtype.
+- Exporting `unRecipeName :: RecipeName -> Text` (or similar record accessors). That gives every caller a free pass to strip the type, defeating the newtype. `fromString`/`Show` cover construction and display; reach past them only inside the defining module.
+- Pattern-matching on the constructor outside the defining module to extract the inner value. Same as the above with extra steps.
+- `f :: Text -> Map Text Foo -> Either Text Bar` where the three `Text`s mean different things.
+- A `String` filepath, URL, ID, or token threaded as a plain `String`. If it has a domain meaning, it has a newtype.
