@@ -61,6 +61,8 @@ data Availability = Availability
   deriving stock (Generic)
   deriving anyclass (ToJSON)
 
+-- | Restart strategy for a process. We only emit one variant today; the
+-- type stays a closed sum to keep the choice explicit at the call site.
 data RestartPolicy = ExitOnFailure
 
 instance ToJSON RestartPolicy where
