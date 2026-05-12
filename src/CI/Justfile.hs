@@ -75,7 +75,7 @@ data Parameter = Parameter
 instance FromJSON Parameter where
   parseJSON = genericParseJSON defaultOptions {fieldLabelModifier = dropWhileEnd (== '_')}
 
--- | A recipe-level attribute. Named cases cover the attributes this runner interprets today; everything else (including future attributes just may add) round-trips opaquely as 'Other'. JSON shapes mirror just's own encoding: flag attributes are bare strings (@"parallel"@, @"linux"@); parameterized ones are single-key objects (@{"metadata": ["..."]}@, @{"group": "..."}@).
+-- | A recipe-level attribute. Named cases cover the attributes this runner interprets today; everything else (including future attributes just may add) is preserved opaquely as 'Other'. JSON shapes mirror just's own encoding: flag attributes are bare strings (@"parallel"@, @"linux"@); parameterized ones are single-key objects (@{"metadata": ["..."]}@, @{"group": "..."}@). Decode-only — there is no @ToJSON@.
 data Attribute
   = Parallel
   | Metadata [Text]
@@ -95,7 +95,6 @@ data Os
   | Dragonfly
   deriving stock (Generic, Show, Eq, Ord, Bounded, Enum)
 
--- | Mapping from just's bare-string OS gate to its 'Os' constructor.
 osFromText :: Text -> Maybe Os
 osFromText = flip lookup osTable
   where
