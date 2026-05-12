@@ -2,9 +2,9 @@
 default:
     @just --list
 
-# Run all checks (build + flake check) concurrently.
+# Run all checks (build + flake check) concurrently, then smoke-test the binary.
 [metadata("entrypoint")]
-ci: checks
+ci: checks run-check
 
 # Fan out `build` and `flake-check` to run in parallel.
 [parallel]
