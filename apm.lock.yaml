@@ -4,7 +4,7 @@ apm_version: 0.9.2
 dependencies:
 - repo_url: srid/agency
   host: github.com
-  resolved_commit: 3c86f74c8a9a39cb8a7c11a7ebd97ee524dc91ef
+  resolved_commit: f5ed2d8d7842123d2c3c0894f53753b8734c3fa8
   resolved_ref: master
   package_type: apm_package
   deployed_files:
@@ -26,7 +26,7 @@ dependencies:
     .claude/agents/lowy.md: sha256:05aff7f6a91149a42c1fb9a3ca382a6f77bc39ac8a8d45436d443dd3349fb11e
     .claude/hooks/agency/scripts/do-stop-guard.sh: sha256:cb033f86c15ffd3d09d8e4b74a61f55a70def4cc4131cc013b7368a2d23f3f33
     .claude/rules/apm-sources.md: sha256:65640c481c347cc4edf50603f784d0b448b6395acc43419a4f8ad0c53de2db4b
-  content_hash: sha256:0de8b45117e0a5a9d8c192bbf459d97a591b575d811e1f0487d1da5c0a0f2a77
+  content_hash: sha256:8169b1976ab3b3268642e930dd3f9c87efe9c4c552bdec070de154a3b6b845c3
 local_deployed_files:
 - .claude/rules/workflow.md
 local_deployed_file_hashes:
