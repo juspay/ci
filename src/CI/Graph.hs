@@ -7,6 +7,7 @@ import CI.Justfile (Recipe, RecipeName, recipeDeps)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 
+-- | Adjacency map (recipe → its direct deps) for every recipe reachable from @root@. Returns 'Left' if @root@ is not a key of the input map.
 reachableAdjacency :: RecipeName -> Map.Map RecipeName Recipe -> Either String (Map.Map RecipeName [RecipeName])
 reachableAdjacency root g
   -- Reject missing roots up front; G.reachable on an absent vertex

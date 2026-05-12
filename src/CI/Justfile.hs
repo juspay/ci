@@ -6,7 +6,16 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 -- | Bindings for the @just@ CLI and its @--dump --dump-format json@ schema.
-module CI.Justfile (RecipeName, Recipe, recipeDeps, fetchDump) where
+module CI.Justfile
+  ( -- * Schema
+    RecipeName,
+    Recipe,
+    recipeDeps,
+
+    -- * Fetching
+    fetchDump,
+  )
+where
 
 import Data.Aeson (FromJSON (parseJSON), FromJSONKey, Options (..), ToJSON, ToJSONKey, defaultOptions, eitherDecodeStrict, genericParseJSON)
 import Data.List (dropWhileEnd)
@@ -22,6 +31,7 @@ import System.Which (staticWhich)
 justBin :: FilePath
 justBin = $(staticWhich "just")
 
+-- | The identifier of a recipe, as it appears in a justfile and as a key in 'just --dump's `recipes` map.
 newtype RecipeName = RecipeName Text
   deriving newtype (Show, Eq, Ord, IsString, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 
@@ -48,6 +58,7 @@ data Parameter = Parameter
 instance FromJSON Parameter where
   parseJSON = genericParseJSON defaultOptions {fieldLabelModifier = dropWhileEnd (== '_')}
 
+-- | A parsed recipe: its declared dependencies and formal parameters.
 data Recipe = Recipe
   { dependencies :: [Dep],
     parameters :: [Parameter]
@@ -59,9 +70,11 @@ newtype Dump = Dump {recipes :: Map.Map RecipeName Recipe}
   deriving stock (Generic)
   deriving anyclass (FromJSON)
 
+-- | Names of the recipes this recipe directly depends on. Drops the @arguments@ at each call site.
 recipeDeps :: Recipe -> [RecipeName]
 recipeDeps = map recipe . dependencies
 
+-- | Invoke @just --dump --dump-format json@ and decode the @recipes@ map. Returns 'Left' with the underlying decode error on parse failure.
 fetchDump :: IO (Either String (Map.Map RecipeName Recipe))
 fetchDump = do
   raw <- TE.encodeUtf8 . T.pack <$> readProcess justBin ["--dump", "--dump-format", "json"] ""
