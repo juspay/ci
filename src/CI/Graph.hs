@@ -27,13 +27,13 @@ instance Display ReachError where
   displayBuilder (MissingRecipe r) =
     "recipe " <> displayBuilder r <> " not found in justfile"
 
--- | The subgraph of the recipe graph reachable from @root@. Returns 'Left' if @root@ isn't a key of the input map.
-reachableSubgraph :: RecipeName -> Map.Map RecipeName Recipe -> Either ReachError (G.AdjacencyMap RecipeName)
+-- | The recipes reachable from @root@ along their declared dependencies. Returns 'Left' if @root@ isn't a key of the input map.
+reachableSubgraph :: RecipeName -> Map.Map RecipeName Recipe -> Either ReachError (Map.Map RecipeName Recipe)
 reachableSubgraph root g
   -- Reject missing roots up front; G.reachable on an absent vertex
   -- silently returns [root], which would yield a one-vertex graph.
   | Map.notMember root g = Left $ MissingRecipe root
-  | otherwise = Right $ G.induce (`Set.member` keep) recipeGraph
+  | otherwise = Right $ Map.restrictKeys g keep
   where
     recipeGraph =
       G.stars
