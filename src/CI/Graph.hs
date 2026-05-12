@@ -49,13 +49,14 @@ reachableSubgraph root g
         ]
     keep = Set.fromList $ G.reachable recipeGraph root
 
--- | A cycle was found while linearizing a recipe's sequential deps. Carries the cycle in topSort order.
+-- | The recipes cannot be linearized: their dependencies form a cycle.
+-- Carries the cycling recipes in the order @topSort@ returned them.
 newtype OrderingConflict = OrderingConflict {cycleNodes :: NE.NonEmpty RecipeName}
   deriving stock (Show)
 
 instance Display OrderingConflict where
   displayBuilder (OrderingConflict c) =
-    "sequential dependency augmentation introduced a cycle: "
+    "recipe dependencies form a cycle: "
       <> displayBuilder (T.intercalate " -> " (display <$> NE.toList c))
 
 -- | Build the directed execution graph for a recipe map.
