@@ -11,7 +11,7 @@ module CI.Executor
 where
 
 import CI.Justfile (RecipeName)
-import CI.Plan (RunSpec (..))
+import CI.Plan (ExecSpec (..))
 import CI.Sinks (LiveTail (..), Sinks (..))
 import Control.Concurrent.MVar (withMVar)
 import Control.Exception (bracket, finally)
@@ -34,11 +34,11 @@ import System.Process
 
 -- | Run a recipe's body. Pure dep-aggregators (empty 'bodyLines') return
 -- 'ExitSuccess' immediately without spawning a shell.
-exec :: Sinks -> RecipeName -> RunSpec -> IO ExitCode
-exec _ _ spec | null spec.bodyLines = pure ExitSuccess
-exec sinks name spec =
+exec :: Sinks -> RecipeName -> ExecSpec -> IO ExitCode
+exec _ _ es | null es.bodyLines = pure ExitSuccess
+exec sinks name es =
   withLogHandle sinks name $ \mLog ->
-    runScript sinks name mLog (renderScript spec.bodyLines)
+    runScript sinks name mLog (renderScript es.bodyLines)
 
 -- | Join body lines into one shell script. @set -e@ aborts on first failure,
 -- mirroring just's @sh@ default.

@@ -18,7 +18,7 @@ module CI.Scheduler
 where
 
 import CI.Justfile (RecipeName)
-import CI.Plan (Plan, RunSpec (..))
+import CI.Plan (DepSpec (..), ExecSpec, Plan, RunSpec (..))
 import Control.Concurrent.Async (Async, async, cancel, mapConcurrently, wait)
 import Control.Exception (Exception, finally, throwIO)
 import Data.Foldable (find)
@@ -28,9 +28,10 @@ import Data.Text.Display (Display (..))
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar)
 import System.Exit (ExitCode (..))
 
--- | How to execute one recipe's body. Injected so the scheduler is free of
--- I/O concerns (sinks, handles).
-type Exec = RecipeName -> RunSpec -> IO ExitCode
+-- | How to execute one recipe's body. Takes only the execution-side
+-- projection of a recipe ('ExecSpec'); the scheduler keeps its
+-- 'DepSpec'-shaped sequencing concerns out of the executor's signature.
+type Exec = RecipeName -> ExecSpec -> IO ExitCode
 
 -- | Failures detected by the scheduler before any process runs.
 data PlanError = UnknownRecipe RecipeName
@@ -100,19 +101,19 @@ executeNode execOne plan cache name = do
   spec <- case Map.lookup name plan of
     Just s -> pure s
     Nothing -> throwIO (UnknownRecipe name)
-  depResult <- runDeps spec
+  depResult <- runDeps spec.depSpec
   case depResult of
     Just failed -> pure failed
-    Nothing -> execOne name spec
+    Nothing -> execOne name spec.execSpec
   where
     go = scheduleNode execOne plan cache
-    runDeps :: RunSpec -> IO (Maybe ExitCode)
-    runDeps spec
-      | null spec.deps = pure Nothing
-      | spec.parallelDeps = do
-          codes <- mapConcurrently (\d -> go d >>= wait) spec.deps
+    runDeps :: DepSpec -> IO (Maybe ExitCode)
+    runDeps ds
+      | null ds.deps = pure Nothing
+      | ds.parallelDeps = do
+          codes <- mapConcurrently (\d -> go d >>= wait) ds.deps
           pure (find (/= ExitSuccess) codes)
-      | otherwise = sequentialDeps spec.deps
+      | otherwise = sequentialDeps ds.deps
     -- Sequential: stop at first non-success so later deps don't run.
     sequentialDeps [] = pure Nothing
     sequentialDeps (d : rest) = do
