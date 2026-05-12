@@ -120,17 +120,24 @@ _Anti-patterns_:
 
 ## use-record-dot
 
-Enable `OverloadedRecordDot` (and pair it with `NoFieldSelectors` for the strongest enforcement). Access record fields with `r.field` rather than the auto-generated selector function `field r`. Don't write one-line wrapper functions whose entire body is a single field access.
+Enable `OverloadedRecordDot` for `r.field` syntax in modules that define or read records. Use plain `r.field` for reads; don't write one-line wrapper functions whose entire body is a single field access, and don't reach for sectioned-functor forms when a plain expression works.
+
+Related extensions to enable per module as needed:
+
+- `NoFieldSelectors` — suppress the auto-generated `field :: Record -> Field` selector functions so dot access is the only path. Keeps the namespace clean.
+- `DuplicateRecordFields` — allow multiple records in the same module to share field names. Dot syntax disambiguates by the value's type.
+- `RecordWildCards` — `Foo {..}` brings all fields into scope at construction or pattern-match. Useful for records with many fields.
 
 _How to apply_:
 
-- In modules that define records, add `{-# LANGUAGE OverloadedRecordDot #-}` and `{-# LANGUAGE NoFieldSelectors #-}`. The former enables `r.field` syntax; the latter removes the auto-generated `field :: Record -> Field` functions, so dot access is the only path and the namespace stays clean.
-- Use `r.field` for accesses, `(.field)` as the sectioned function form (equivalent to `\r -> r.field`).
-- Don't write `getFoo :: Bar -> Foo; getFoo = foo`. Use `b.foo` at the call site. A wrapper that does more than a single field access (e.g., a composition or a projection across nested records) earns its name and is fine.
+- Use `r.field` for direct reads. Pattern-match (or `RecordWildCards`) when destructuring; record-update syntax (`r { f = v }`) for updates.
+- For mapping field access over a structure, use a list comprehension (`[d.recipe | d <- r.deps]`) or an explicit lambda. Plain syntax beats clever syntax.
+- Inline trivial accesses at the call site. A function whose body is a single field selection is the auto-generated selector under another name.
 
 _Anti-patterns_:
 
-- A module exporting `getFoo :: Bar -> Foo` whose body is just `foo`. That's the selector under another name.
+- A module exporting `getFoo :: Bar -> Foo` whose body is `\b -> b.foo`. That's the selector renamed.
+- `(.field) <$> r.items` — sectioned-functor composition. Prefer `[i.field | i <- r.items]` (plain dot accesses, no sections) or a `\i -> i.field` lambda.
 - Reaching for `foo bar` (function-call style) when `bar.foo` works in scope.
 
 ## prefer-newtype-over-string
