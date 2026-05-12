@@ -13,11 +13,14 @@ module CI.Justfile
     recipeDeps,
 
     -- * Fetching
+    FetchError (..),
+    displayFetchError,
     fetchDump,
   )
 where
 
 import Data.Aeson (FromJSON (parseJSON), FromJSONKey, Options (..), ToJSON, ToJSONKey, defaultOptions, eitherDecodeStrict, genericParseJSON)
+import Data.Bifunctor (first)
 import Data.List (dropWhileEnd)
 import qualified Data.Map.Strict as Map
 import Data.String (IsString)
@@ -80,8 +83,16 @@ newtype Dump = Dump {recipes :: Map.Map RecipeName Recipe}
 recipeDeps :: Recipe -> [RecipeName]
 recipeDeps = map recipe . dependencies
 
--- | Invoke @just --dump --dump-format json@ and decode the @recipes@ map. Returns 'Left' with the underlying decode error on parse failure.
-fetchDump :: IO (Either String (Map.Map RecipeName Recipe))
+-- | Failures from 'fetchDump'. Currently only one case (the JSON decode failed), but the type leaves room for more — e.g. a future @just@-process exit-code failure.
+data FetchError = FetchParseError String
+  deriving stock (Show)
+
+-- | Human-readable message for a 'FetchError'.
+displayFetchError :: FetchError -> Text
+displayFetchError (FetchParseError msg) = "failed to decode just dump: " <> T.pack msg
+
+-- | Invoke @just --dump --dump-format json@ and decode the @recipes@ map.
+fetchDump :: IO (Either FetchError (Map.Map RecipeName Recipe))
 fetchDump = do
   raw <- TE.encodeUtf8 . T.pack <$> readProcess justBin ["--dump", "--dump-format", "json"] ""
-  pure (recipes <$> eitherDecodeStrict raw)
+  pure (first FetchParseError (recipes <$> eitherDecodeStrict raw))
