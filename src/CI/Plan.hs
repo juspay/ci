@@ -79,10 +79,7 @@ planFromRecipes = fmap toSpec
         }
     isParallel Parallel = True
     isParallel _ = False
-    -- just emits each body line as a list of fragments (literals plus, in
-    -- the general case, interpolation chunks). For now we concat the
-    -- fragments and strip the leading silence marker if present; recipes
-    -- with @{{var}}@ interpolation in their bodies will lose the
-    -- interpolation, which is fine for the current justfile (no
-    -- interpolations) and a known V1 limitation.
+    -- Concat just's per-line fragments and strip the leading silence
+    -- marker; interpolation fragments are dropped (no interpolating
+    -- recipes today).
     flattenLine = T.dropWhile (== '@') . T.concat

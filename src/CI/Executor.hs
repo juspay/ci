@@ -72,16 +72,13 @@ runScript sinks name mLog script =
               close_fds = True
             }
     withCreateProcess cp $ \_ _ _ ph -> do
-      -- 'withCreateProcess' closes 'wr' in the parent on its way in (per
-      -- the 'UseHandle' contract); 'rd' stays open here for the drain and
-      -- gets closed by the outer 'bracket' cleanup on any exit path.
       hSetBuffering rd LineBuffering
       drainStream sinks name mLog rd
       waitForProcess ph
   where
-    -- Outer-bracket cleanup; runs on success and exception alike. 'wr' is
-    -- already closed by 'withCreateProcess' on its way in, but 'hClose' is
-    -- idempotent so the double-close is harmless.
+    -- 'wr' is already closed by 'withCreateProcess' (the 'UseHandle'
+    -- contract); the double-close is harmless because 'hClose' is
+    -- idempotent.
     closeBoth (rd, wr) = hClose rd `finally` hClose wr
 
 -- | Drain a line-oriented stream until EOF, fanning every line out to the
