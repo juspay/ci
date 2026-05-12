@@ -2,15 +2,17 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Bindings for the @just@ CLI and its @--dump --dump-format json@ schema.
 module CI.Justfile
   ( -- * Schema
     RecipeName,
-    Recipe,
-    recipeDeps,
+    Recipe (..),
+    Dep (..),
 
     -- * Fetching
     FetchError (..),
@@ -20,7 +22,7 @@ module CI.Justfile
 where
 
 import Data.Aeson (FromJSON (parseJSON), FromJSONKey, Options (..), ToJSON, ToJSONKey, defaultOptions, eitherDecodeStrict, genericParseJSON)
-import Data.Bifunctor (first)
+import Data.Bifunctor (bimap)
 import Data.List (dropWhileEnd)
 import qualified Data.Map.Strict as Map
 import Data.String (IsString)
@@ -79,10 +81,6 @@ newtype Dump = Dump {recipes :: Map.Map RecipeName Recipe}
   deriving stock (Generic)
   deriving anyclass (FromJSON)
 
--- | Names of the recipes this recipe directly depends on. Drops the @arguments@ at each call site.
-recipeDeps :: Recipe -> [RecipeName]
-recipeDeps = map recipe . dependencies
-
 -- | Failures from 'fetchDump'. Currently only one case (the JSON decode failed), but the type leaves room for more — e.g. a future @just@-process exit-code failure.
 data FetchError = FetchParseError String
   deriving stock (Show)
@@ -95,4 +93,4 @@ displayFetchError (FetchParseError msg) = "failed to decode just dump: " <> T.pa
 fetchDump :: IO (Either FetchError (Map.Map RecipeName Recipe))
 fetchDump = do
   raw <- TE.encodeUtf8 . T.pack <$> readProcess justBin ["--dump", "--dump-format", "json"] ""
-  pure (first FetchParseError (recipes <$> eitherDecodeStrict raw))
+  pure (bimap FetchParseError (\d -> d.recipes) (eitherDecodeStrict @Dump raw))

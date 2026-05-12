@@ -1,4 +1,5 @@
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Compute the dependency subgraph reachable from a root recipe.
@@ -14,7 +15,7 @@ where
 
 import qualified Algebra.Graph.AdjacencyMap as G
 import qualified Algebra.Graph.AdjacencyMap.Algorithm as G
-import CI.Justfile (Recipe, RecipeName, recipeDeps)
+import CI.Justfile (Dep (..), Recipe (..), RecipeName)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -36,5 +37,9 @@ reachableSubgraph root g
   | Map.notMember root g = Left (MissingRecipe root)
   | otherwise = Right (G.induce (`Set.member` keep) recipeGraph)
   where
-    recipeGraph = G.stars [(name, recipeDeps r) | (name, r) <- Map.toList g]
+    recipeGraph =
+      G.stars
+        [ (name, [d.recipe | d <- r.dependencies])
+          | (name, r) <- Map.toList g
+        ]
     keep = Set.fromList (G.reachable recipeGraph root)
