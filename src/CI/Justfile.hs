@@ -13,6 +13,7 @@ module CI.Justfile
     RecipeName,
     Recipe (..),
     Dep (..),
+    Attribute (..),
 
     -- * Fetching
     FetchError (..),
@@ -20,7 +21,8 @@ module CI.Justfile
   )
 where
 
-import Data.Aeson (FromJSON (parseJSON), FromJSONKey, Options (..), ToJSON, ToJSONKey, Value, defaultOptions, eitherDecodeStrict, genericParseJSON)
+import Data.Aeson (FromJSON (parseJSON), FromJSONKey, Options (..), ToJSON, ToJSONKey, Value (Object, String), defaultOptions, eitherDecodeStrict, genericParseJSON)
+import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Bifunctor (bimap)
 import Data.List (dropWhileEnd)
 import qualified Data.Map.Strict as Map
@@ -72,11 +74,25 @@ data Parameter = Parameter
 instance FromJSON Parameter where
   parseJSON = genericParseJSON defaultOptions {fieldLabelModifier = dropWhileEnd (== '_')}
 
--- | A parsed recipe: its declared dependencies, formal parameters, and recipe-level attributes. The @attributes@ array is heterogeneous in @just@'s JSON — flag attributes like @parallel@ serialize as bare strings, parameterized ones like @group("ci")@ serialize as single-key objects — so it's passed through as raw 'Value's. Interpretation belongs to consumers, not this schema mirror.
+-- | A recipe-level attribute. Named cases cover the attributes this runner interprets today; everything else (including future attributes just may add) round-trips opaquely as 'Other'. JSON shapes mirror just's own encoding: flag attributes are bare strings (@"parallel"@); parameterized ones are single-key objects (@{"metadata": ["..."]}@, @{"group": "..."}@).
+data Attribute
+  = Parallel
+  | Metadata [Text]
+  | Other Value
+  deriving stock (Generic, Show)
+
+instance FromJSON Attribute where
+  parseJSON (String "parallel") = pure Parallel
+  parseJSON v@(Object o)
+    | Just metas <- KeyMap.lookup "metadata" o = Metadata <$> parseJSON metas
+    | otherwise = pure (Other v)
+  parseJSON v = pure (Other v)
+
+-- | A parsed recipe: its declared dependencies, formal parameters, and recipe-level attributes.
 data Recipe = Recipe
   { dependencies :: [Dep],
     parameters :: [Parameter],
-    attributes :: [Value]
+    attributes :: [Attribute]
   }
   deriving stock (Generic)
   deriving anyclass (FromJSON)

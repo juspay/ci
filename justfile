@@ -3,6 +3,7 @@ default:
     @just --list
 
 # Run all checks (build + flake check) concurrently.
+[metadata("entrypoint")]
 ci: checks
 
 # Fan out `build` and `flake-check` to run in parallel.
