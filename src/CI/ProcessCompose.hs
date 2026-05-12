@@ -8,7 +8,6 @@ module CI.ProcessCompose
   ( -- * Schema
     ProcessCompose (..),
     Process (..),
-    Condition (..),
     Availability (..),
     RestartPolicy (..),
 
@@ -24,6 +23,7 @@ import CI.Justfile (Attribute (..), Dep (..), Recipe (..), RecipeName)
 import Data.Aeson (ToJSON (..), object, (.=))
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
+import Data.Set (Set)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display (..), display)
@@ -37,23 +37,21 @@ instance ToJSON ProcessCompose where
 -- | One @processes.<name>@ entry. Field names match @process-compose@'s YAML keys.
 data Process = Process
   { command :: Text,
-    depends_on :: Map.Map RecipeName Condition,
+    depends_on :: Set RecipeName,
     availability :: Availability
   }
+
+-- | Every dep edge we emit carries the same condition.
+processCompletedSuccessfully :: Text
+processCompletedSuccessfully = "process_completed_successfully"
 
 instance ToJSON Process where
   toJSON p =
     object
       [ "command" .= p.command,
-        "depends_on" .= Map.map (\c -> object ["condition" .= c]) p.depends_on,
+        "depends_on" .= Map.fromSet (const (object ["condition" .= processCompletedSuccessfully])) p.depends_on,
         "availability" .= p.availability
       ]
-
--- | The dep-edge condition we emit. Singleton: every dep is "must have exited 0".
-data Condition = ProcessCompletedSuccessfully
-
-instance ToJSON Condition where
-  toJSON ProcessCompletedSuccessfully = toJSON ("process_completed_successfully" :: Text)
 
 -- | Per-process failure policy. Both knobs are set explicitly: 'ExitOnFailure'
 -- propagates a non-zero exit upward; 'exit_on_skipped' also tears down when a
@@ -115,7 +113,7 @@ toProcessCompose recipes =
     mkProcess name _ =
       Process
         { command = "just --no-deps " <> display name,
-          depends_on = Map.fromSet (const ProcessCompletedSuccessfully) (G.postSet name g),
+          depends_on = G.postSet name g,
           availability = Availability {restart = ExitOnFailure, exit_on_skipped = True}
         }
 
