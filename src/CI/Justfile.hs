@@ -6,10 +6,11 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 -- | Bindings for the @just@ CLI and its @--dump --dump-format json@ schema.
-module CI.Justfile (RecipeName (..), Recipe, recipeDeps, fetchDump) where
+module CI.Justfile (RecipeName, Recipe, recipeDeps, fetchDump) where
 
-import Data.Aeson (FromJSON, FromJSONKey, ToJSON, ToJSONKey, eitherDecodeStrict)
+import Data.Aeson (FromJSON (..), FromJSONKey, ToJSON, ToJSONKey, eitherDecodeStrict, withObject, (.:))
 import qualified Data.Map.Strict as Map
+import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -20,24 +21,18 @@ import System.Which (staticWhich)
 justBin :: FilePath
 justBin = $(staticWhich "just")
 
-newtype RecipeName = RecipeName {unRecipeName :: Text}
-  deriving stock (Show)
-  deriving newtype (Eq, Ord, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
+newtype RecipeName = RecipeName Text
+  deriving newtype (Show, Eq, Ord, IsString, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 
-newtype Dep = Dep {recipe :: RecipeName}
-  deriving stock (Generic)
-  deriving anyclass (FromJSON)
+newtype Recipe = Recipe {recipeDeps :: [RecipeName]}
 
-newtype Recipe = Recipe {dependencies :: [Dep]}
-  deriving stock (Generic)
-  deriving anyclass (FromJSON)
+instance FromJSON Recipe where
+  parseJSON = withObject "Recipe" $ \o ->
+    Recipe <$> (mapM (withObject "Dep" (.: "recipe")) =<< o .: "dependencies")
 
 newtype Dump = Dump {recipes :: Map.Map RecipeName Recipe}
   deriving stock (Generic)
   deriving anyclass (FromJSON)
-
-recipeDeps :: Recipe -> [RecipeName]
-recipeDeps = map recipe . dependencies
 
 fetchDump :: IO (Either String (Map.Map RecipeName Recipe))
 fetchDump = do

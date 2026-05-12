@@ -34,7 +34,9 @@ _How to apply_:
 _Anti-patterns_:
 
 - Hand-writing `parseJSON = withObject "X" $ \o -> X <$> o .: "name" <*> o .: "age"` when the field names match. That's the literal contract Generic already gives you.
-- Squashing nested objects at parse time. The parser shouldn't do projection work; it should mirror the wire format, with a separate function doing the unwrap.
+- Squashing nested objects at parse time *when those objects carry distinct domain info*. Mirror the wire structure as Haskell records when each field carries meaning; project in plain code afterwards.
+
+_Exception_: when a wire wrapper is a single-field object around what's semantically one identifier (e.g., `{recipe: "name", arguments: ignored}`) and the other fields will always be ignored in Haskell, a one-line `parseJSON` that extracts the inner value is acceptable. The wrapper carries no domain info of its own; mirroring it produces a noise newtype that exists only to be projected away.
 
 ## module-needs-description
 
