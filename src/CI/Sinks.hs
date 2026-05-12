@@ -8,7 +8,6 @@ module CI.Sinks
   ( Sinks (..),
     LiveTail (..),
     newLiveTail,
-    noSinks,
   )
 where
 
@@ -37,7 +36,3 @@ data Sinks = Sinks
     -- keeps lines from interleaving.
     liveTail :: Maybe LiveTail
   }
-
--- | No sinks configured: discard output. Useful for tests.
-noSinks :: Sinks
-noSinks = Sinks Nothing Nothing
