@@ -9,7 +9,6 @@ module CI.Graph
 
     -- * Errors
     ReachError (..),
-    displayReachError,
   )
 where
 
@@ -18,16 +17,15 @@ import qualified Algebra.Graph.AdjacencyMap.Algorithm as G
 import CI.Justfile (Dep (..), Recipe (..), RecipeName)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
-import Data.Text (Text)
-import qualified Data.Text as T
+import Data.Text.Display (Display (..))
 
 -- | Failures from 'reachableSubgraph'.
 data ReachError = MissingRecipe RecipeName
   deriving stock (Show)
 
--- | Human-readable message for a 'ReachError'.
-displayReachError :: ReachError -> Text
-displayReachError (MissingRecipe r) = "recipe " <> T.pack (show r) <> " not found in justfile"
+instance Display ReachError where
+  displayBuilder (MissingRecipe r) =
+    "recipe " <> displayBuilder r <> " not found in justfile"
 
 -- | The subgraph of the recipe graph reachable from @root@. Returns 'Left' if @root@ isn't a key of the input map.
 reachableSubgraph :: RecipeName -> Map.Map RecipeName Recipe -> Either ReachError (G.AdjacencyMap RecipeName)

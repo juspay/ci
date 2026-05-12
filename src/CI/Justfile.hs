@@ -16,7 +16,6 @@ module CI.Justfile
 
     -- * Fetching
     FetchError (..),
-    displayFetchError,
     fetchDump,
   )
 where
@@ -28,6 +27,7 @@ import qualified Data.Map.Strict as Map
 import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Text.Display (Display (..))
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
 import System.Exit (ExitCode (..))
@@ -41,6 +41,9 @@ justBin = $(staticWhich "just")
 -- | The identifier of a recipe, as it appears in a justfile and as a key in @just --dump@'s @recipes@ map.
 newtype RecipeName = RecipeName Text
   deriving newtype (Show, Eq, Ord, IsString, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
+
+instance Display RecipeName where
+  displayBuilder (RecipeName t) = displayBuilder t
 
 -- | One entry in a recipe's @dependencies@ array: the dep's target name plus any arguments passed at this call site (only non-empty when the target is parameterized).
 data Dep = Dep
@@ -90,10 +93,11 @@ data FetchError
     FetchParseError String
   deriving stock (Show)
 
--- | Human-readable message for a 'FetchError'.
-displayFetchError :: FetchError -> Text
-displayFetchError (FetchProcessError n stderr) = "just exited with code " <> T.pack (show n) <> ": " <> T.pack stderr
-displayFetchError (FetchParseError msg) = "failed to decode just dump: " <> T.pack msg
+instance Display FetchError where
+  displayBuilder (FetchProcessError n stderr) =
+    "just exited with code " <> displayBuilder n <> ": " <> displayBuilder (T.pack stderr)
+  displayBuilder (FetchParseError msg) =
+    "failed to decode just dump: " <> displayBuilder (T.pack msg)
 
 -- | Invoke @just --dump --dump-format json@ and decode the @recipes@ map. Process failures and JSON parse failures are both surfaced as 'FetchError'; no exception escapes.
 fetchDump :: IO (Either FetchError (Map.Map RecipeName Recipe))
