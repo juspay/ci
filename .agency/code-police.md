@@ -1,20 +1,27 @@
 # Project rules for code-police
 
-## document-and-group-exports
+## document-symbols
 
-Public exports are the module's API. Every exported name carries a Haddock comment, multi-concern export lists are organized into named groups, and only names actually imported somewhere stay exported.
+Top-level symbols carry Haddock comments. The bar differs by visibility:
+
+- **Every exported symbol** is documented — no exceptions. Multi-concern export lists are organized into named groups so the public API reads like a table of contents.
+- **Internal symbols** are documented when their purpose isn't obvious from name and type alone. A type that mirrors an external JSON shape, a TH-spliced binary path, a record whose fields encode a non-trivial protocol — those want a Haddock. A trivial alias or one-line helper doesn't.
+
+Only export a symbol if something outside the module imports it. Dead exports are dead code with an extra step.
 
 _How to apply_:
 
 - Above each exported declaration (function, type, instance, etc.), write a `-- |` Haddock describing what it is and why a caller would use it. Exception: a single-function module whose module-level Haddock already describes that function (typical `Main`) doesn't need the per-function repeat.
-- When a module exports more than a couple of names across distinct concerns, organize the export list with Haddock group headings (`-- * Group name`). The export list then reads like a table of contents.
-- Don't export a name unless something outside the module imports it. Grep the codebase; if nobody imports `foo`, remove it from the export list (and probably the binding — see `no-dead-code`).
+- For internal symbols, ask: would a reader who didn't write this know what this is for from name and type alone? If not, write the Haddock.
+- When a module exports more than a couple of names across distinct concerns, organize the export list with Haddock group headings (`-- * Group name`).
+- Don't export a name unless something outside the module imports it. Grep the codebase; if nobody imports `foo`, drop it from the export list (and probably the binding — see `no-dead-code`).
 
 _Anti-patterns_:
 
 - An exported declaration with no Haddock above its type signature.
+- An internal data type whose purpose requires reading consumer code to understand.
 - A multi-concern export list with no group headings.
-- Exports that nothing imports. Dead code with an extra step.
+- Exports that nothing imports.
 
 ## one-module-one-concern
 

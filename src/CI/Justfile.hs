@@ -28,13 +28,15 @@ import GHC.Generics (Generic)
 import System.Process (readProcess)
 import System.Which (staticWhich)
 
+-- | Absolute path to the @just@ binary, baked in at compile time via Nix.
 justBin :: FilePath
 justBin = $(staticWhich "just")
 
--- | The identifier of a recipe, as it appears in a justfile and as a key in 'just --dump's `recipes` map.
+-- | The identifier of a recipe, as it appears in a justfile and as a key in @just --dump@'s @recipes@ map.
 newtype RecipeName = RecipeName Text
   deriving newtype (Show, Eq, Ord, IsString, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 
+-- | One entry in a recipe's @dependencies@ array: the dep's target name plus any arguments passed at this call site (only non-empty when the target is parameterized).
 data Dep = Dep
   { recipe :: RecipeName,
     arguments :: [Text]
@@ -42,6 +44,7 @@ data Dep = Dep
   deriving stock (Generic)
   deriving anyclass (FromJSON)
 
+-- | One entry in a recipe's @parameters@ array: a formal parameter the recipe declares. Mirrors the nine fields @just@ emits per parameter.
 data Parameter = Parameter
   { name :: Text,
     default_ :: Maybe Text,
@@ -55,6 +58,8 @@ data Parameter = Parameter
   }
   deriving stock (Generic)
 
+-- Custom because @default@ is a Haskell keyword; the field is @default_@ here
+-- and stripped back to @default@ for the JSON.
 instance FromJSON Parameter where
   parseJSON = genericParseJSON defaultOptions {fieldLabelModifier = dropWhileEnd (== '_')}
 
@@ -66,6 +71,7 @@ data Recipe = Recipe
   deriving stock (Generic)
   deriving anyclass (FromJSON)
 
+-- | The top-level @just --dump@ object. We only model the @recipes@ field; aeson ignores the rest.
 newtype Dump = Dump {recipes :: Map.Map RecipeName Recipe}
   deriving stock (Generic)
   deriving anyclass (FromJSON)
