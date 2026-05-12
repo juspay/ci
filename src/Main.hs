@@ -3,7 +3,8 @@
 -- | Entry point: print the dependency adjacency reachable from @just ci@.
 module Main where
 
-import CI.Graph (displayReachError, reachableAdjacency)
+import qualified Algebra.Graph.AdjacencyMap as G
+import CI.Graph (displayReachError, reachableSubgraph)
 import CI.Justfile (RecipeName, displayFetchError, fetchDump)
 import Data.Aeson.Encode.Pretty (encodePretty)
 import qualified Data.ByteString.Lazy.Char8 as BL
@@ -14,5 +15,5 @@ main :: IO ()
 main = do
   let root = "ci" :: RecipeName
   g <- either (die . T.unpack . displayFetchError) pure =<< fetchDump
-  adj <- either (die . T.unpack . displayReachError) pure (reachableAdjacency root g)
-  BL.putStrLn (encodePretty adj)
+  subgraph <- either (die . T.unpack . displayReachError) pure (reachableSubgraph root g)
+  BL.putStrLn (encodePretty (G.adjacencyMap subgraph))

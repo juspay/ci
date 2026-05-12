@@ -1,10 +1,10 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Compute the dependency adjacency reachable from a root recipe.
+-- | Compute the dependency subgraph reachable from a root recipe.
 module CI.Graph
   ( -- * Computation
-    reachableAdjacency,
+    reachableSubgraph,
 
     -- * Errors
     ReachError (..),
@@ -20,7 +20,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 
--- | Failures from 'reachableAdjacency'.
+-- | Failures from 'reachableSubgraph'.
 data ReachError = MissingRecipe RecipeName
   deriving stock (Show)
 
@@ -28,13 +28,13 @@ data ReachError = MissingRecipe RecipeName
 displayReachError :: ReachError -> Text
 displayReachError (MissingRecipe r) = "recipe " <> T.pack (show r) <> " not found in justfile"
 
--- | Adjacency map (recipe → its direct deps) for every recipe reachable from @root@. Returns 'Left' if @root@ is not a key of the input map.
-reachableAdjacency :: RecipeName -> Map.Map RecipeName Recipe -> Either ReachError (Map.Map RecipeName [RecipeName])
-reachableAdjacency root g
+-- | The subgraph of the recipe graph reachable from @root@. Returns 'Left' if @root@ isn't a key of the input map.
+reachableSubgraph :: RecipeName -> Map.Map RecipeName Recipe -> Either ReachError (G.AdjacencyMap RecipeName)
+reachableSubgraph root g
   -- Reject missing roots up front; G.reachable on an absent vertex
-  -- silently returns [root], which would yield a one-key adjacency map.
+  -- silently returns [root], which would yield a one-vertex graph.
   | Map.notMember root g = Left (MissingRecipe root)
-  | otherwise = Right (recipeDeps <$> Map.restrictKeys g keep)
+  | otherwise = Right (G.induce (`Set.member` keep) recipeGraph)
   where
     recipeGraph = G.stars [(name, recipeDeps r) | (name, r) <- Map.toList g]
     keep = Set.fromList (G.reachable recipeGraph root)
