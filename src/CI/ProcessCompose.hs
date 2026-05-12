@@ -1,3 +1,5 @@
+{-# LANGUAGE DeriveAnyClass #-}
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -22,12 +24,12 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import Data.Text (Text)
 import Data.Text.Display (display)
+import GHC.Generics (Generic)
 
 -- | Top-level @process-compose.yaml@: a map from process name to spec.
 newtype ProcessCompose = ProcessCompose {processes :: Map.Map RecipeName Process}
-
-instance ToJSON ProcessCompose where
-  toJSON pc = object ["processes" .= pc.processes]
+  deriving stock (Generic)
+  deriving anyclass (ToJSON)
 
 -- | One @processes.<name>@ entry. Field names match @process-compose@'s YAML keys.
 data Process = Process
@@ -56,13 +58,8 @@ data Availability = Availability
   { restart :: RestartPolicy,
     exit_on_skipped :: Bool
   }
-
-instance ToJSON Availability where
-  toJSON a =
-    object
-      [ "restart" .= a.restart,
-        "exit_on_skipped" .= a.exit_on_skipped
-      ]
+  deriving stock (Generic)
+  deriving anyclass (ToJSON)
 
 data RestartPolicy = ExitOnFailure
 
