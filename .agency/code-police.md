@@ -27,7 +27,7 @@ Default to Generic-based auto-derivation (`deriving stock Generic` + `deriving a
 
 _How to apply_:
 
-- **Name Haskell record fields to match the JSON keys.** aeson Generic ignores unknown fields, so you only need to model the keys you care about — `data Dep = Dep { recipe :: RecipeName }` decodes `{recipe: "name", arguments: [...]}` cleanly without any wrapper noise.
+- **Name Haskell record fields to match the JSON keys.** aeson Generic ignores unknown fields, so missing keys aren't a parse error. Each omission is a deliberate design choice though — verify the field has no domain meaning your consumer needs before deciding it's ignorable. "Ignore" should mean "I read the source schema and this is runtime metadata", not "I haven't looked at what this field is for".
 - Mirror the wire structure as records; write a `data` → `data` projection function for any consumer that wants flattened data. The parser stays generic.
 - Only if the JSON keys can't match the Haskell field names (reserved words, casing constraints), use `genericParseJSON` with an `Options { fieldLabelModifier = ... }` modifier. Still derives, just with a transform.
 
