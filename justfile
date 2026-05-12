@@ -25,10 +25,12 @@ ghcid:
 # Run the binary and verify its JSON output contains the `ci` recipe.
 [linux]
 run-check: build
+    echo "Running on Linux $(uname -srm)"
     nix run . | tee /tmp/ci-out
     grep -q '"ci"' /tmp/ci-out
 
 [macos]
 run-check: build
-    nix run . | tee /tmp/ci-out
-    grep -q '"ci"' /tmp/ci-out
+    echo "Running on macOS $(sw_vers -productVersion)"
+    nix run . | tee "${TMPDIR}ci-out"
+    grep -q '"ci"' "${TMPDIR}ci-out"
