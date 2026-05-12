@@ -7,7 +7,9 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | Bindings for the @just@ CLI and its @--dump --dump-format json@ schema.
+-- | Everything tied to the @just@ data model: the @just@ CLI, its
+-- @--dump --dump-format json@ schema, and the predicates that read recipe
+-- attributes (notably @[metadata(\"entrypoint\")]@ discovery).
 module CI.Justfile
   ( -- * Schema
     RecipeName,
