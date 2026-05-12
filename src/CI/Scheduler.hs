@@ -55,9 +55,11 @@ runPlan execOne plan root = do
 
 cancelAll :: IORef (Map.Map RecipeName (MVar (Async ExitCode))) -> IO ()
 cancelAll cache = do
-  m <- readIORef cache
-  -- 'readMVar' here is safe: every entry was 'putMVar'-populated before the
-  -- caller could observe the slot (see 'scheduleNode').
+  -- Snapshot-and-clear under one atomic op so an in-flight 'scheduleNode'
+  -- can't insert after we'd already iterated and skip the cancel.
+  m <- atomicModifyIORef' cache (\old -> (Map.empty, old))
+  -- 'readMVar' is safe: every entry was 'putMVar'-populated before becoming
+  -- visible in the cache (see 'scheduleNode').
   mapM_ (\mv -> readMVar mv >>= cancel) (Map.elems m)
 
 -- | Look up (or create) the 'Async' for @name@. We reserve-slot-first to
