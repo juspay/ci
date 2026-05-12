@@ -102,6 +102,22 @@ _Anti-patterns_:
 - Catching an exception and rethrowing as `error "..."` — that's renaming a partial function, not fixing it.
 - `fromRight (error "won't happen") result` — same partial function wearing a hat.
 
+## structured-errors
+
+Error values are structured types, not strings. A function that can fail in distinct ways exposes those failure modes as constructors so callers can pattern-match, log structured fields, or recover programmatically. `String`/`Text` errors collapse all failure paths into one opaque blob — readable in CLI output, useless to any caller that wants to do more than dump and die.
+
+_How to apply_:
+
+- Define a sum type per error domain: `data FetchError = FetchParseError String | NetworkError IOException | ...`. Functions return `Either MyError a` (or `m a` for `MonadError MyError m`).
+- The **display layer** — where the error reaches a human — owns the formatting: a `displayError :: MyError -> Text` function in the same module as the error type. The boundary (`main`, a handler) calls it once.
+- If the value an upstream library hands you is genuinely just a `String` (e.g. aeson's `eitherDecodeStrict` returns `Either String a`), wrap it in a single-constructor type: `data FetchError = FetchParseError String`. The string survives at runtime; the type system now distinguishes "this is a fetch error" from other error kinds.
+
+_Anti-patterns_:
+
+- `Either String a` or `IO (Either String a)` as a function's return type. Callers can't discriminate failure modes.
+- Building a user-facing message string inline at the failure site (`Left ("recipe " <> show k <> " not found")`). The structured error should carry `k`; the display function formats it.
+- Catching a structured error and re-throwing as a `String` — same bug, one layer deeper.
+
 ## prefer-newtype-over-string
 
 Domain identifiers and values typed as `Text`/`String` should be wrapped in newtypes. A `Text` carrying a recipe name, user ID, URL, file path, semver string, etc. is a domain concept; the type system should know that. Without the newtype, the compiler can't distinguish a `Map Text Recipe` keyed by recipe name from one keyed by user ID, and signatures with several `Text` parameters become impossible to call correctly without re-reading docs.
