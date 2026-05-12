@@ -1,10 +1,20 @@
 # Project rules for code-police
 
-## comments-only-for-non-obvious
+## document-and-group-exports
 
-Default to writing no comments. Add one only when the **why** is non-obvious to a reader who can already see the code — a hidden constraint, a subtle invariant, a workaround for a specific bug, behavior that would surprise.
+Public exports are the module's API. Every exported name carries a Haddock comment, multi-concern export lists are organized into named groups, and only names actually imported somewhere stay exported.
 
-If removing the comment wouldn't confuse a future reader, don't write it.
+_How to apply_:
+
+- Above each exported declaration (function, type, instance, etc.), write a `-- |` Haddock describing what it is and why a caller would use it. Exception: a single-function module whose module-level Haddock already describes that function (typical `Main`) doesn't need the per-function repeat.
+- When a module exports more than a couple of names across distinct concerns, organize the export list with Haddock group headings (`-- * Group name`). The export list then reads like a table of contents.
+- Don't export a name unless something outside the module imports it. Grep the codebase; if nobody imports `foo`, remove it from the export list (and probably the binding — see `no-dead-code`).
+
+_Anti-patterns_:
+
+- An exported declaration with no Haddock above its type signature.
+- A multi-concern export list with no group headings.
+- Exports that nothing imports. Dead code with an extra step.
 
 ## one-module-one-concern
 
