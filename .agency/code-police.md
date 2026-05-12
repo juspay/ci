@@ -84,3 +84,18 @@ _Anti-patterns_:
 - `loadConfig :: IO Config` that `die`s on a parse failure. Caller can't see this can fail, can't recover, can't write a retry. Should be `IO (Either String Config)`.
 - Catching an exception and rethrowing as `error "..."` — that's renaming a partial function, not fixing it.
 - `fromRight (error "won't happen") result` — same partial function wearing a hat.
+
+## prefer-newtype-over-string
+
+Domain identifiers and values typed as `Text`/`String` should be wrapped in newtypes. A `Text` carrying a recipe name, user ID, URL, file path, semver string, etc. is a domain concept; the type system should know that. Without the newtype, the compiler can't distinguish a `Map Text Recipe` keyed by recipe name from one keyed by user ID, and signatures with several `Text` parameters become impossible to call correctly without re-reading docs.
+
+_How to apply_:
+
+- Wrap each domain concept in a `newtype RecipeName = RecipeName { unRecipeName :: Text }` (or similar). Derive `Eq`, `Ord`, `FromJSON`/`ToJSON`, and — for newtypes used as `Map` keys — `FromJSONKey`/`ToJSONKey` via `deriving newtype`, so the runtime cost is zero.
+- Export the unwrapper alongside the constructor when callers genuinely need the inner string (for display, formatting, or passing to a string-only API).
+- Refactor signatures from `Text -> Map Text Foo -> Map Text [Text]` to `Name -> Map Name Foo -> Map Name [Name]` so the compiler can catch swapped parameters.
+
+_Anti-patterns_:
+
+- `f :: Text -> Map Text Foo -> Either Text Bar` where the three `Text`s mean different things. The reader has to guess; the compiler can't help.
+- A `String` filepath, URL, ID, or token threaded through several functions as a plain `String`. If it has a domain meaning, it has a newtype.
