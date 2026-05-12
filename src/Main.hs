@@ -4,7 +4,7 @@
 -- subgraph reachable from the @[metadata(\"entrypoint\")]@ recipe.
 module Main where
 
-import CI.Graph (reachableSubgraph)
+import CI.Graph (buildExecutionGraph, reachableSubgraph)
 import CI.Justfile (fetchDump, findEntrypoint)
 import CI.ProcessCompose (toProcessCompose)
 import qualified Data.ByteString as BS
@@ -18,5 +18,5 @@ main = do
   recipes <- either (die . T.unpack . display) pure =<< fetchDump
   root <- either (die . T.unpack . display) pure $ findEntrypoint recipes
   reachable <- either (die . T.unpack . display) pure $ reachableSubgraph root recipes
-  pc <- either (die . T.unpack . display) pure $ toProcessCompose reachable
-  BS.putStr $ Y.encode pc
+  graph <- either (die . T.unpack . display) pure $ buildExecutionGraph reachable
+  BS.putStr $ Y.encode $ toProcessCompose graph
