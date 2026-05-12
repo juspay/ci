@@ -19,6 +19,10 @@ module CI.Justfile
     -- * Fetching
     FetchError (..),
     fetchDump,
+
+    -- * Entrypoint discovery
+    EntrypointError (..),
+    findEntrypoint,
   )
 where
 
@@ -30,7 +34,7 @@ import qualified Data.Map.Strict as Map
 import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.Display (Display (..))
+import Data.Text.Display (Display (..), display)
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
 import System.Exit (ExitCode (..))
@@ -159,3 +163,29 @@ fetchDump = do
   pure $ case exitCode of
     ExitFailure n -> Left $ FetchProcessError n stderr
     ExitSuccess -> bimap FetchParseError (\d -> d.recipes) (eitherDecodeStrict @Dump (TE.encodeUtf8 (T.pack stdout)))
+
+-- | Failures from 'findEntrypoint'.
+data EntrypointError
+  = -- | No recipe carries an @entrypoint@ metadata tag.
+    NoEntrypoint
+  | -- | More than one recipe carries one; the runner refuses to guess.
+    MultipleEntrypoints [RecipeName]
+  deriving stock (Show)
+
+instance Display EntrypointError where
+  displayBuilder NoEntrypoint =
+    "no recipe is tagged [metadata(\"entrypoint\")]; mark exactly one recipe as the CI entry point"
+  displayBuilder (MultipleEntrypoints rs) =
+    "multiple recipes are tagged [metadata(\"entrypoint\")]: "
+      <> displayBuilder (T.intercalate ", " (display <$> rs))
+
+-- | Find the single recipe tagged with @[metadata(\"entrypoint\")]@. Refuses to silently pick one when more than one is tagged.
+findEntrypoint :: Map.Map RecipeName Recipe -> Either EntrypointError RecipeName
+findEntrypoint recipes =
+  case [name | (name, r) <- Map.toList recipes, any isEntrypoint r.attributes] of
+    [] -> Left NoEntrypoint
+    [name] -> Right name
+    xs -> Left (MultipleEntrypoints xs)
+  where
+    isEntrypoint (Metadata ms) = "entrypoint" `elem` ms
+    isEntrypoint _ = False
