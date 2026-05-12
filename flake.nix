@@ -15,6 +15,7 @@
             projectRoot = self;
             modules = [{
               devShell.mkShellArgs.nativeBuildInputs = [ pkgs.just ];
+              settings.ci.extraBuildTools = [ pkgs.just ];
             }];
           };
         in
