@@ -30,7 +30,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
-import System.Process (readProcess)
+import System.Exit (ExitCode (..))
+import System.Process (readProcessWithExitCode)
 import System.Which (staticWhich)
 
 -- | Absolute path to the @just@ binary, baked in at compile time via Nix.
@@ -81,16 +82,23 @@ newtype Dump = Dump {recipes :: Map.Map RecipeName Recipe}
   deriving stock (Generic)
   deriving anyclass (FromJSON)
 
--- | Failures from 'fetchDump'. Currently only one case (the JSON decode failed), but the type leaves room for more — e.g. a future @just@-process exit-code failure.
-data FetchError = FetchParseError String
+-- | Failures from 'fetchDump'.
+data FetchError
+  = -- | The @just@ subprocess exited non-zero. Carries the exit code and the captured stderr.
+    FetchProcessError Int String
+  | -- | The @just@ subprocess succeeded but its JSON output didn't decode. Carries aeson's underlying message.
+    FetchParseError String
   deriving stock (Show)
 
 -- | Human-readable message for a 'FetchError'.
 displayFetchError :: FetchError -> Text
+displayFetchError (FetchProcessError n stderr) = "just exited with code " <> T.pack (show n) <> ": " <> T.pack stderr
 displayFetchError (FetchParseError msg) = "failed to decode just dump: " <> T.pack msg
 
--- | Invoke @just --dump --dump-format json@ and decode the @recipes@ map.
+-- | Invoke @just --dump --dump-format json@ and decode the @recipes@ map. Process failures and JSON parse failures are both surfaced as 'FetchError'; no exception escapes.
 fetchDump :: IO (Either FetchError (Map.Map RecipeName Recipe))
 fetchDump = do
-  raw <- TE.encodeUtf8 . T.pack <$> readProcess justBin ["--dump", "--dump-format", "json"] ""
-  pure $ bimap FetchParseError (\d -> d.recipes) (eitherDecodeStrict @Dump raw)
+  (exitCode, stdout, stderr) <- readProcessWithExitCode justBin ["--dump", "--dump-format", "json"] ""
+  pure $ case exitCode of
+    ExitFailure n -> Left $ FetchProcessError n stderr
+    ExitSuccess -> bimap FetchParseError (\d -> d.recipes) (eitherDecodeStrict @Dump (TE.encodeUtf8 (T.pack stdout)))
