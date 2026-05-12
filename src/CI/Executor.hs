@@ -1,17 +1,19 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Execute a single 'RunSpec' body: shell @sh -c@, stream its merged
--- stdout+stderr through the configured 'Sinks', return its 'ExitCode'.
--- Bodies are joined into one shell script with @set -e@ so a failing line
--- aborts the recipe — matching just's per-line failure semantics.
+-- | Execute a single recipe by shelling @just --no-deps \<name\>@, streaming
+-- its merged stdout+stderr through the configured 'Sinks', and returning
+-- its 'ExitCode'. @--no-deps@ tells just to run only the body — our
+-- scheduler has already handled the dep edges, so just must not re-trigger
+-- them. Delegating to just (instead of executing the body ourselves) means
+-- we inherit just's full surface: shebangs, @{{var}}@ interpolation,
+-- @set shell := …@, dotenv loading, @-@ ignore-error, OS gates, etc.
 module CI.Executor
   ( exec,
   )
 where
 
-import CI.Justfile (RecipeName)
-import CI.Plan (ExecSpec (..))
+import CI.Justfile (RecipeName, justBin)
 import CI.Sinks (LiveTail (..), Sinks (..))
 import Control.Concurrent.MVar (withMVar)
 import Control.Exception (bracket, finally)
@@ -20,7 +22,7 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Text.Display (display)
 import System.Directory (createDirectoryIfMissing)
-import System.Exit (ExitCode (..))
+import System.Exit (ExitCode)
 import System.FilePath ((<.>), (</>))
 import System.IO (BufferMode (LineBuffering), Handle, IOMode (WriteMode), hClose, hIsEOF, hSetBuffering, withFile)
 import System.Process
@@ -32,22 +34,17 @@ import System.Process
     withCreateProcess,
   )
 
--- | Run a recipe's body. Pure dep-aggregators (empty 'bodyLines') return
--- 'ExitSuccess' immediately without spawning a shell.
-exec :: Sinks -> RecipeName -> ExecSpec -> IO ExitCode
-exec _ _ es | null es.bodyLines = pure ExitSuccess
-exec sinks name es =
+-- | Run one recipe. Bracketed so the log handle is closed even under async
+-- cancellation; the drain reaches EOF before this returns so the scheduler
+-- never marks the recipe done while output is still in flight.
+exec :: Sinks -> RecipeName -> IO ExitCode
+exec sinks name =
   withLogHandle sinks name $ \mLog ->
-    runScript sinks name mLog (renderScript es.bodyLines)
-
--- | Join body lines into one shell script. @set -e@ aborts on first failure,
--- mirroring just's @sh@ default.
-renderScript :: [T.Text] -> T.Text
-renderScript ls = T.unlines ("set -e" : ls)
+    runJust sinks name mLog
 
 -- | Open the per-recipe log file (if configured) under @logDir/<name>.log@,
--- pass its handle to the body, and close it on exit — even under async
--- cancellation. 'withFile' provides the bracketed close.
+-- pass its handle to the body, and close it on exit. 'withFile' provides
+-- the bracketed close.
 withLogHandle :: Sinks -> RecipeName -> (Maybe Handle -> IO a) -> IO a
 withLogHandle sinks name k = case sinks.logDir of
   Nothing -> k Nothing
@@ -55,17 +52,15 @@ withLogHandle sinks name k = case sinks.logDir of
     createDirectoryIfMissing True dir
     withFile (dir </> T.unpack (display name) <.> "log") WriteMode (k . Just)
 
--- | Spawn @sh -c <script>@ with stdout and stderr merged onto one pipe at
--- the OS level (single FD shared between both streams in the child) so the
--- child's own write order is preserved at the byte level. One reader thread
--- drains the pipe; the scheduler only sees this recipe complete after the
--- drain reaches EOF, so downstream recipes never start before predecessor
--- logs have flushed.
-runScript :: Sinks -> RecipeName -> Maybe Handle -> T.Text -> IO ExitCode
-runScript sinks name mLog script =
+-- | Spawn @just --no-deps \<name\>@ with stdout and stderr merged onto one
+-- pipe at the OS level (single FD shared between both streams in the
+-- child) so the child's own write order is preserved at the byte level.
+-- One reader thread drains the pipe.
+runJust :: Sinks -> RecipeName -> Maybe Handle -> IO ExitCode
+runJust sinks name mLog =
   bracket createPipe closeBoth $ \(rd, wr) -> do
     let cp =
-          (proc "/bin/sh" ["-c", T.unpack script])
+          (proc justBin ["--no-deps", T.unpack (display name)])
             { std_in = NoStream,
               std_out = UseHandle wr,
               std_err = UseHandle wr,

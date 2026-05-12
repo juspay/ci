@@ -2,13 +2,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Adapter between the raw justfile schema ('CI.Justfile') and the runner.
--- Boils each 'Recipe' down to just what the scheduler and executor need —
--- dep names, whether deps fan out, and the body lines to shell out — so the
--- downstream modules never see 'Attribute' or 'Parameter'.
+-- The scheduler doesn't need to know what a recipe /does/ — it only needs
+-- the dep edges and the parallel/sequential flag, because actual execution
+-- delegates to @just --no-deps \<name\>@ (see 'CI.Executor'). So the spec
+-- carries only that scheduling-relevant slice.
 module CI.Plan
-  ( DepSpec (..),
-    ExecSpec (..),
-    RunSpec (..),
+  ( RunSpec (..),
     Plan,
     planFromRoot,
     planFromRecipes,
@@ -19,35 +18,16 @@ import qualified Algebra.Graph.AdjacencyMap as G
 import CI.Graph (ReachError, reachableSubgraph)
 import CI.Justfile (Attribute (..), Recipe (..), RecipeName, recipeDeps)
 import qualified Data.Map.Strict as Map
-import Data.Text (Text)
-import qualified Data.Text as T
 
--- | Scheduling-side projection of a recipe: how its deps are ordered. The
--- scheduler reads this and nothing else.
-data DepSpec = DepSpec
+-- | What the runner needs to know about a single recipe: how to order its
+-- deps. The body is whatever @just --no-deps \<name\>@ executes; we don't
+-- mirror it here.
+data RunSpec = RunSpec
   { -- | Direct dep names, in declaration order.
     deps :: [RecipeName],
     -- | Whether this recipe's @[parallel]@ attribute is set. When true, the
     -- scheduler runs its 'deps' concurrently; otherwise sequentially.
     parallelDeps :: Bool
-  }
-
--- | Execution-side projection: how to actually run the recipe body. The
--- executor reads this and nothing else.
-newtype ExecSpec = ExecSpec
-  { -- | Body lines to execute under @sh -c@. Empty for pure dep-aggregators
-    -- (@ci@, @checks@). Each entry is one line with just's leading @\@@
-    -- (silent) marker stripped — we always echo via the sink layer.
-    bodyLines :: [Text]
-  }
-
--- | What the runner needs to know about a single recipe — a pair of the two
--- projections above so they evolve independently. Adding a scheduling-only
--- field (e.g. @timeout@) extends 'DepSpec' without touching the executor's
--- signature, and vice versa.
-data RunSpec = RunSpec
-  { depSpec :: DepSpec,
-    execSpec :: ExecSpec
   }
 
 -- | The whole plan: every recipe in the reachable subgraph, keyed by name.
@@ -70,16 +50,8 @@ planFromRecipes = fmap toSpec
     toSpec :: Recipe -> RunSpec
     toSpec r =
       RunSpec
-        { depSpec =
-            DepSpec
-              { deps = recipeDeps r,
-                parallelDeps = any isParallel r.attributes
-              },
-          execSpec = ExecSpec {bodyLines = map flattenLine r.body}
+        { deps = recipeDeps r,
+          parallelDeps = any isParallel r.attributes
         }
     isParallel Parallel = True
     isParallel _ = False
-    -- Concat just's per-line fragments and strip the leading silence
-    -- marker; interpolation fragments are dropped (no interpolating
-    -- recipes today).
-    flattenLine = T.dropWhile (== '@') . T.concat

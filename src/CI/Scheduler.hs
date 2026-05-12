@@ -18,7 +18,7 @@ module CI.Scheduler
 where
 
 import CI.Justfile (RecipeName)
-import CI.Plan (DepSpec (..), ExecSpec, Plan, RunSpec (..))
+import CI.Plan (Plan, RunSpec (..))
 import Control.Concurrent.Async (Async, async, cancel, mapConcurrently, wait)
 import Control.Exception (Exception, finally, throwIO)
 import Data.Foldable (find)
@@ -28,10 +28,10 @@ import Data.Text.Display (Display (..))
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar, tryReadMVar)
 import System.Exit (ExitCode (..))
 
--- | How to execute one recipe's body. Takes only the execution-side
--- projection of a recipe ('ExecSpec'); the scheduler keeps its
--- 'DepSpec'-shaped sequencing concerns out of the executor's signature.
-type Exec = RecipeName -> ExecSpec -> IO ExitCode
+-- | How to execute one recipe's body. The recipe name is enough — the
+-- executor shells out to @just --no-deps \<name\>@, so it doesn't need
+-- (and shouldn't see) the scheduler's 'RunSpec'.
+type Exec = RecipeName -> IO ExitCode
 
 -- | Failures detected by the scheduler before any process runs.
 data PlanError = UnknownRecipe RecipeName
@@ -109,13 +109,13 @@ executeNode execOne plan cache name = do
   spec <- case Map.lookup name plan of
     Just s -> pure s
     Nothing -> throwIO (UnknownRecipe name)
-  depResult <- runDeps spec.depSpec
+  depResult <- runDeps spec
   case depResult of
     Just failed -> pure failed
-    Nothing -> execOne name spec.execSpec
+    Nothing -> execOne name
   where
     go = scheduleNode execOne plan cache
-    runDeps :: DepSpec -> IO (Maybe ExitCode)
+    runDeps :: RunSpec -> IO (Maybe ExitCode)
     runDeps ds
       | null ds.deps = pure Nothing
       | ds.parallelDeps = do

@@ -22,6 +22,9 @@ module CI.Justfile
     -- * Fetching
     FetchError (..),
     fetchDump,
+
+    -- * Invocation
+    justBin,
   )
 where
 
@@ -127,12 +130,11 @@ instance FromJSON Attribute where
     | otherwise = pure (Other v)
   parseJSON v = pure (Other v)
 
--- | A parsed recipe: its dependencies, formal parameters, recipe-level attributes, and command body. The body is a list of lines; each line is a list of fragments (literal text and — eventually — interpolation chunks) that just emits separately; we concatenate them to recover the line. Recipes with no body (pure dep-aggregators like @ci@) decode as @[]@.
+-- | A parsed recipe: its declared dependencies, formal parameters, and recipe-level attributes.
 data Recipe = Recipe
   { dependencies :: [Dep],
     parameters :: [Parameter],
-    attributes :: [Attribute],
-    body :: [[Text]]
+    attributes :: [Attribute]
   }
   deriving stock (Generic)
   deriving anyclass (FromJSON)
