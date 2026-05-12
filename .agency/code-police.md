@@ -23,18 +23,18 @@ _Anti-patterns_:
 
 ## prefer-aeson-auto-derive
 
-Default to Generic-based auto-derivation (`deriving stock Generic` + `deriving anyclass FromJSON`/`ToJSON`) for JSON parsers. Hand-write `parseJSON`/`toJSON` only when auto-derivation genuinely can't express the mapping — and even then, reach for `genericParseJSON` with an `Options { fieldLabelModifier = ... }` before falling back to `withObject` + `(.:)`.
+Default to Generic-based auto-derivation (`deriving stock Generic` + `deriving anyclass FromJSON`/`ToJSON`). Hand-write `parseJSON`/`toJSON` only when auto-derivation genuinely can't express the mapping.
 
 _How to apply_:
 
-- Use `deriving stock Generic` + `deriving anyclass FromJSON` (or `ToJSON`) and let aeson read the field names directly off the record.
-- If the JSON keys differ from the Haskell field names, use `genericParseJSON` with an `Options { fieldLabelModifier = ... }` modifier. Still derives — just with a transform.
-- Mirror the JSON structure as Haskell records when each nested object carries distinct domain info; project in plain code afterwards. If a wire wrapper has no domain meaning of its own (typically a single-field object whose field _is_ the identifier, e.g. `{recipe: "name", ...}`), inline the extraction in `parseJSON` rather than introducing a noise newtype just to feed auto-derive.
+- **Name Haskell record fields to match the JSON keys.** aeson Generic ignores unknown fields, so you only need to model the keys you care about — `data Dep = Dep { recipe :: RecipeName }` decodes `{recipe: "name", arguments: [...]}` cleanly without any wrapper noise.
+- Mirror the wire structure as records; write a `data` → `data` projection function for any consumer that wants flattened data. The parser stays generic.
+- Only if the JSON keys can't match the Haskell field names (reserved words, casing constraints), use `genericParseJSON` with an `Options { fieldLabelModifier = ... }` modifier. Still derives, just with a transform.
 
 _Anti-patterns_:
 
-- Hand-writing `parseJSON = withObject "X" $ \o -> X <$> o .: "name" <*> o .: "age"` when the field names match. That's the literal contract Generic already gives you.
-- Squashing nested objects at parse time *when those objects carry distinct domain info*. Mirror those; project in plain code afterwards.
+- Hand-writing `parseJSON = withObject "X" $ \o -> X <$> o .: "name" <*> o .: "age"` when the field names match the JSON. That's the literal contract Generic already gives you.
+- Renaming Haskell fields away from the JSON keys "for aesthetics" and then needing `fieldLabelModifier`. Match the wire; rename in the projection layer if anyone needs it.
 
 ## module-needs-description
 
