@@ -80,7 +80,7 @@ buildExecutionGraph recipes =
     Left c -> Left (OrderingConflict c)
     Right _ -> Right g
   where
-    g = G.overlay (G.vertices (Map.keys recipes)) (G.edges (concatMap callerEdges (Map.toList recipes)))
+    g = G.vertices (Map.keys recipes) `G.overlay` G.edges (concatMap callerEdges $ Map.toList recipes)
 
 callerEdges :: (RecipeName, Recipe) -> [(RecipeName, RecipeName)]
 callerEdges (name, r) =
