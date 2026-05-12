@@ -12,7 +12,7 @@ module CI.Plan
   )
 where
 
-import CI.Justfile (Attribute (..), Dep (..), Recipe (..), RecipeName)
+import CI.Justfile (Attribute (..), Recipe (..), RecipeName, recipeDeps)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -41,7 +41,7 @@ planFromRecipes = fmap toSpec
     toSpec :: Recipe -> RunSpec
     toSpec r =
       RunSpec
-        { deps = [d.recipe | d <- r.dependencies],
+        { deps = recipeDeps r,
           parallelDeps = any isParallel r.attributes,
           bodyLines = map flattenLine r.body
         }

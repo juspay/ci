@@ -16,6 +16,9 @@ module CI.Justfile
     Attribute (..),
     Os (..),
 
+    -- * Projections
+    recipeDeps,
+
     -- * Fetching
     FetchError (..),
     fetchDump,
@@ -133,6 +136,13 @@ data Recipe = Recipe
   }
   deriving stock (Generic)
   deriving anyclass (FromJSON)
+
+-- | The plain dep-name list from a 'Recipe', dropping the call-site
+-- 'arguments' on each 'Dep'. Both the graph builder and the runner adapter
+-- want this projection; consolidating it here keeps their notions of
+-- "what's a dep" in lockstep.
+recipeDeps :: Recipe -> [RecipeName]
+recipeDeps r = [d.recipe | d <- r.dependencies]
 
 -- | The top-level @just --dump@ object. We only model the @recipes@ field; aeson ignores the rest.
 newtype Dump = Dump {recipes :: Map.Map RecipeName Recipe}

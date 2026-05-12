@@ -14,7 +14,7 @@ module Main where
 import qualified Algebra.Graph.AdjacencyMap as G
 import CI.Executor (exec)
 import CI.Graph (reachableSubgraph)
-import CI.Justfile (Dep (..), Recipe (..), RecipeName, fetchDump)
+import CI.Justfile (Recipe, RecipeName, fetchDump, recipeDeps)
 import CI.Plan (planFromRecipes)
 import CI.Scheduler (runPlan)
 import qualified CI.Sinks as Sinks
@@ -66,6 +66,4 @@ subgraphOrDie ::
   Map.Map RecipeName Recipe ->
   IO (G.AdjacencyMap RecipeName)
 subgraphOrDie root recipes =
-  either (die . T.unpack . display) pure (reachableSubgraph root adj)
-  where
-    adj = fmap (\r -> [d.recipe | d <- r.dependencies]) recipes
+  either (die . T.unpack . display) pure (reachableSubgraph root (fmap recipeDeps recipes))
