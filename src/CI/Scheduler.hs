@@ -22,7 +22,7 @@ import CI.Plan (Plan, RunSpec (..))
 import Control.Concurrent.Async (Async, async, cancel, mapConcurrently, wait)
 import Control.Exception (Exception, finally, throwIO)
 import Data.Foldable (find)
-import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import qualified Data.Map.Strict as Map
 import Data.Text.Display (Display (..))
 import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar)
