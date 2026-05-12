@@ -22,16 +22,16 @@ flake-check:
 ghcid:
     ghcid -T :main
 
-# Run the binary and verify its JSON output contains the `ci` recipe.
+# Run the binary and verify its YAML output declares the `ci` process.
 [linux]
 run-check: build
     echo "Running on Linux $(uname -srm)"
     nix run . | tee /tmp/ci-out
-    grep -q '"ci"' /tmp/ci-out
+    grep -qE '^  ci:' /tmp/ci-out
 
-# Run the binary and verify its JSON output contains the `ci` recipe.
+# Run the binary and verify its YAML output declares the `ci` process.
 [macos]
 run-check: build
     echo "Running on macOS $(sw_vers -productVersion)"
     nix run . | tee "${TMPDIR%/}/ci-out"
-    grep -q '"ci"' "${TMPDIR%/}/ci-out"
+    grep -qE '^  ci:' "${TMPDIR%/}/ci-out"

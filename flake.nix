@@ -14,7 +14,7 @@
           project = (haskell-flake.lib { inherit pkgs; }).evalHaskellProject {
             projectRoot = self;
             modules = [{
-              devShell.mkShellArgs.nativeBuildInputs = [ pkgs.just ];
+              devShell.mkShellArgs.nativeBuildInputs = [ pkgs.just pkgs.process-compose ];
               settings.ci.extraBuildTools = [ pkgs.just ];
             }];
           };
