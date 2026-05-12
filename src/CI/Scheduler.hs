@@ -60,10 +60,12 @@ cancelAll cache = do
   -- caller could observe the slot (see 'scheduleNode').
   mapM_ (\mv -> readMVar mv >>= cancel) (Map.elems m)
 
--- | Look up (or create) the 'Async' for @name@. The 'MVar' slot guards
--- against the race of two concurrent first-time lookups: the slot is
--- reserved atomically, then the loser cancels its speculative async and
--- waits on the winner's.
+-- | Look up (or create) the 'Async' for @name@. We reserve-slot-first to
+-- avoid speculative work under the race of two concurrent first-time
+-- lookups: each caller creates an empty 'MVar' and races to insert it
+-- atomically. The winner — whoever's 'MVar' got into the map — spawns the
+-- 'Async' and fills the slot; the loser drops its empty 'MVar' and blocks
+-- on 'readMVar' over the winner's. No async is spawned speculatively.
 scheduleNode ::
   Exec ->
   Plan ->
