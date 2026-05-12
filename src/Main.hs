@@ -14,16 +14,15 @@ module Main where
 import qualified Algebra.Graph.AdjacencyMap as G
 import CI.Executor (exec)
 import CI.Graph (reachableSubgraph)
-import CI.Justfile (Recipe, RecipeName, fetchDump, recipeDeps)
+import CI.Justfile (RecipeName, fetchDump, recipeDeps)
 import CI.Plan (planFromRoot)
 import CI.Scheduler (runPlan)
 import qualified CI.Sinks as Sinks
 import Data.Aeson.Encode.Pretty (encodePretty)
 import qualified Data.ByteString.Lazy.Char8 as BL
-import qualified Data.Map.Strict as Map
 import Data.String (fromString)
 import qualified Data.Text as T
-import Data.Text.Display (display)
+import Data.Text.Display (Display, display)
 import System.Environment (getArgs)
 import System.Exit (die, exitWith)
 import System.IO (stderr)
@@ -40,14 +39,14 @@ main = do
 
 printGraph :: RecipeName -> IO ()
 printGraph root = do
-  recipes <- fetchOrDie
-  subgraph <- subgraphOrDie root recipes
+  recipes <- dieOnLeft =<< fetchDump
+  subgraph <- dieOnLeft (reachableSubgraph root (fmap recipeDeps recipes))
   BL.putStrLn $ encodePretty $ G.adjacencyMap subgraph
 
 runRecipe :: RecipeName -> IO ()
 runRecipe root = do
-  recipes <- fetchOrDie
-  plan <- either (die . T.unpack . display) pure (planFromRoot root recipes)
+  recipes <- dieOnLeft =<< fetchDump
+  plan <- dieOnLeft (planFromRoot root recipes)
   liveTail <- Sinks.newLiveTail stderr
   let sinks =
         Sinks.Sinks
@@ -57,12 +56,9 @@ runRecipe root = do
   code <- runPlan (exec sinks) plan root
   exitWith code
 
-fetchOrDie :: IO (Map.Map RecipeName Recipe)
-fetchOrDie = either (die . T.unpack . display) pure =<< fetchDump
-
-subgraphOrDie ::
-  RecipeName ->
-  Map.Map RecipeName Recipe ->
-  IO (G.AdjacencyMap RecipeName)
-subgraphOrDie root recipes =
-  either (die . T.unpack . display) pure (reachableSubgraph root (fmap recipeDeps recipes))
+-- | Boundary helper: turn a 'Left' error into 'die' with its 'Display'
+-- rendering. Used in 'main' to surface 'FetchError', 'ReachError', and
+-- 'PlanError' as terminating CLI output without spreading the formatting
+-- recipe across each call site.
+dieOnLeft :: (Display e) => Either e a -> IO a
+dieOnLeft = either (die . T.unpack . display) pure
