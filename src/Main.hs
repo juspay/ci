@@ -1,14 +1,13 @@
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Entry point. Two modes:
+-- | Entry point. Subcommands:
 --
---   * No args (or @--graph@): print the dependency adjacency reachable from
---     @just ci@ as pretty JSON. Preserves the original behaviour (see #2).
+--   * @ci graph@ — print the dependency adjacency reachable from a root
+--     recipe (default @ci@) as pretty JSON. Preserves #2's behaviour.
 --
---   * @run [<recipe>]@: build the plan and run that recipe (default: @ci@)
---     under our scheduler, with stdout+stderr streamed to per-recipe log
---     files under @./.ci-logs@ and prefixed live output on stderr.
+--   * @ci run [<recipe>]@ — build the plan and run that recipe (default
+--     @ci@) under our scheduler, with stdout+stderr streamed to per-recipe
+--     log files under @./.ci-logs@ and prefixed live output on stderr.
 module Main where
 
 import qualified Algebra.Graph.AdjacencyMap as G
@@ -23,19 +22,63 @@ import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.String (fromString)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
-import System.Environment (getArgs)
+import Options.Applicative
+  ( Parser,
+    argument,
+    command,
+    execParser,
+    fullDesc,
+    help,
+    helper,
+    hsubparser,
+    info,
+    metavar,
+    progDesc,
+    showDefault,
+    str,
+    value,
+    (<**>),
+  )
 import System.Exit (die, exitWith)
 import System.IO (stderr)
 
+-- | The two top-level invocations the binary supports.
+data Command
+  = Graph RecipeName
+  | Run RecipeName
+
 main :: IO ()
-main = do
-  args <- getArgs
-  case args of
-    [] -> printGraph "ci"
-    ["--graph"] -> printGraph "ci"
-    ["run"] -> runRecipe "ci"
-    ["run", name] -> runRecipe (fromString name)
-    _ -> die "usage: ci [--graph] | ci run [<recipe>]"
+main = run =<< execParser opts
+  where
+    opts =
+      info
+        (commandP <**> helper)
+        ( fullDesc
+            <> progDesc "Inspect or run justfile recipes"
+        )
+
+run :: Command -> IO ()
+run (Graph root) = printGraph root
+run (Run root) = runRecipe root
+
+commandP :: Parser Command
+commandP =
+  hsubparser
+    ( command "graph" (info (Graph <$> rootArg) (progDesc "Print the recipe dep graph as JSON"))
+        <> command "run" (info (Run <$> rootArg) (progDesc "Run a recipe and its deps"))
+    )
+
+-- | Positional recipe argument shared by both subcommands. Defaults to
+-- @"ci"@ when omitted.
+rootArg :: Parser RecipeName
+rootArg =
+  argument
+    (fromString <$> str)
+    ( metavar "RECIPE"
+        <> value "ci"
+        <> showDefault
+        <> help "Root recipe name"
+    )
 
 printGraph :: RecipeName -> IO ()
 printGraph root = do

@@ -22,18 +22,18 @@ flake-check:
 ghcid:
     ghcid -T :main
 
-# Run the binary in --graph mode and verify its JSON contains the `ci` recipe.
+# Run the binary in graph mode and verify its JSON contains the `ci` recipe.
 [linux]
 run-check: build
     echo "Running on Linux $(uname -srm)"
-    nix run . | tee /tmp/ci-out
+    nix run . -- graph | tee /tmp/ci-out
     grep -q '"ci"' /tmp/ci-out
 
-# Run the binary in --graph mode and verify its JSON contains the `ci` recipe.
+# Run the binary in graph mode and verify its JSON contains the `ci` recipe.
 [macos]
 run-check: build
     echo "Running on macOS $(sw_vers -productVersion)"
-    nix run . | tee "${TMPDIR%/}/ci-out"
+    nix run . -- graph | tee "${TMPDIR%/}/ci-out"
     grep -q '"ci"' "${TMPDIR%/}/ci-out"
 
 # Smoke-test the in-Haskell runner: execute `noop` via the binary and verify

@@ -5,10 +5,11 @@ A Haskell playground for experiments around CI tooling.
 ## Usage
 
 ```sh
-ci             # print the recipe graph reachable from `ci` as JSON
-ci --graph     # same, explicit
-ci run         # run the `ci` recipe via our scheduler
-ci run <name>  # run a specific recipe
+ci graph             # print the recipe graph reachable from `ci` as JSON
+ci graph <name>      # same, rooted at a different recipe
+ci run               # run the `ci` recipe via our scheduler
+ci run <name>        # run a specific recipe
+ci --help            # full CLI reference
 ```
 
 The runner topologically schedules a justfile's recipes, fans dep groups out

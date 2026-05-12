@@ -26,6 +26,7 @@ executable ci
         , containers
         , directory
         , filepath
+        , optparse-applicative
         , process
         , text
         , text-display
