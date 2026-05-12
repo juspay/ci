@@ -84,7 +84,7 @@ buildExecutionGraph recipes =
 
 callerEdges :: (RecipeName, Recipe) -> [(RecipeName, RecipeName)]
 callerEdges (name, r) =
-  case map (.recipe) r.dependencies of
+  case [d.recipe | d <- r.dependencies] of
     [] -> []
     deps
       | isParallel r.attributes || length deps == 1 ->
