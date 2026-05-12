@@ -84,14 +84,17 @@ buildExecutionGraph recipes =
 
 callerEdges :: (RecipeName, Recipe) -> [(RecipeName, RecipeName)]
 callerEdges (name, r) =
-  case [d.recipe | d <- r.dependencies] of
-    [] -> []
-    deps
-      | isParallel r.attributes || length deps == 1 ->
-          [(name, d) | d <- deps]
+  case NE.nonEmpty [d.recipe | d <- r.dependencies] of
+    Nothing -> []
+    Just deps
+      | isParallel r.attributes || isSingleton deps ->
+          [(name, d) | d <- NE.toList deps]
       | otherwise ->
-          let chain = zip (drop 1 deps) deps
-           in (name, last deps) : chain
+          let depList = NE.toList deps
+              chain = zip (drop 1 depList) depList
+           in (name, NE.last deps) : chain
+  where
+    isSingleton (_ NE.:| rest) = null rest
 
 isParallel :: [Attribute] -> Bool
 isParallel = any (\case Parallel -> True; _ -> False)
