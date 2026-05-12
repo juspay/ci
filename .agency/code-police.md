@@ -118,6 +118,21 @@ _Anti-patterns_:
 - Building a user-facing message string inline at the failure site (`Left ("recipe " <> show k <> " not found")`). The structured error should carry `k`; the display function formats it.
 - Catching a structured error and re-throwing as a `String` — same bug, one layer deeper.
 
+## use-record-dot
+
+Enable `OverloadedRecordDot` (and pair it with `NoFieldSelectors` for the strongest enforcement). Access record fields with `r.field` rather than the auto-generated selector function `field r`. Don't write one-line wrapper functions whose entire body is a single field access.
+
+_How to apply_:
+
+- In modules that define records, add `{-# LANGUAGE OverloadedRecordDot #-}` and `{-# LANGUAGE NoFieldSelectors #-}`. The former enables `r.field` syntax; the latter removes the auto-generated `field :: Record -> Field` functions, so dot access is the only path and the namespace stays clean.
+- Use `r.field` for accesses, `(.field)` as the sectioned function form (equivalent to `\r -> r.field`).
+- Don't write `getFoo :: Bar -> Foo; getFoo = foo`. Use `b.foo` at the call site. A wrapper that does more than a single field access (e.g., a composition or a projection across nested records) earns its name and is fine.
+
+_Anti-patterns_:
+
+- A module exporting `getFoo :: Bar -> Foo` whose body is just `foo`. That's the selector under another name.
+- Reaching for `foo bar` (function-call style) when `bar.foo` works in scope.
+
 ## prefer-newtype-over-string
 
 Domain identifiers and values typed as `Text`/`String` should be wrapped in newtypes. A `Text` carrying a recipe name, user ID, URL, file path, semver string, etc. is a domain concept; the type system should know that. Without the newtype, the compiler can't distinguish a `Map Text Recipe` keyed by recipe name from one keyed by user ID, and signatures with several `Text` parameters become impossible to call correctly without re-reading docs.
