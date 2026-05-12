@@ -20,7 +20,7 @@ module CI.Justfile
   )
 where
 
-import Data.Aeson (FromJSON (parseJSON), FromJSONKey, Options (..), ToJSON, ToJSONKey, defaultOptions, eitherDecodeStrict, genericParseJSON)
+import Data.Aeson (FromJSON (parseJSON), FromJSONKey, Options (..), ToJSON, ToJSONKey, Value, defaultOptions, eitherDecodeStrict, genericParseJSON)
 import Data.Bifunctor (bimap)
 import Data.List (dropWhileEnd)
 import qualified Data.Map.Strict as Map
@@ -72,10 +72,11 @@ data Parameter = Parameter
 instance FromJSON Parameter where
   parseJSON = genericParseJSON defaultOptions {fieldLabelModifier = dropWhileEnd (== '_')}
 
--- | A parsed recipe: its declared dependencies and formal parameters.
+-- | A parsed recipe: its declared dependencies, formal parameters, and recipe-level attributes. The @attributes@ array is heterogeneous in @just@'s JSON — flag attributes like @parallel@ serialize as bare strings, parameterized ones like @group("ci")@ serialize as single-key objects — so it's passed through as raw 'Value's. Interpretation belongs to consumers, not this schema mirror.
 data Recipe = Recipe
   { dependencies :: [Dep],
-    parameters :: [Parameter]
+    parameters :: [Parameter],
+    attributes :: [Value]
   }
   deriving stock (Generic)
   deriving anyclass (FromJSON)
