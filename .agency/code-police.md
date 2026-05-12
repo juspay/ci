@@ -158,3 +158,9 @@ _Anti-patterns_:
 - Pattern-matching on the constructor outside the defining module to extract the inner value. Same as the above with extra steps.
 - `f :: Text -> Map Text Foo -> Either Text Bar` where the three `Text`s mean different things.
 - A `String` filepath, URL, ID, or token threaded as a plain `String`. If it has a domain meaning, it has a newtype.
+
+## code-style
+
+Small style conventions. Each bullet is mechanically checkable.
+
+- **Prefer `$` to nested `(..(..)..)`** — `f $ g $ h x` reads more linearly than `f (g (h x))`. Use parens only when precedence genuinely demands them.
