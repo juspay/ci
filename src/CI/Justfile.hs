@@ -124,11 +124,12 @@ instance FromJSON Attribute where
     | otherwise = pure (Other v)
   parseJSON v = pure (Other v)
 
--- | A parsed recipe: its declared dependencies, formal parameters, and recipe-level attributes.
+-- | A parsed recipe: its dependencies, formal parameters, recipe-level attributes, and command body. The body is a list of lines; each line is a list of fragments (literal text and — eventually — interpolation chunks) that just emits separately; we concatenate them to recover the line. Recipes with no body (pure dep-aggregators like @ci@) decode as @[]@.
 data Recipe = Recipe
   { dependencies :: [Dep],
     parameters :: [Parameter],
-    attributes :: [Attribute]
+    attributes :: [Attribute],
+    body :: [[Text]]
   }
   deriving stock (Generic)
   deriving anyclass (FromJSON)

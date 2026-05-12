@@ -10,15 +10,22 @@ common warnings
 executable ci
     import:           warnings
     main-is:          Main.hs
-    other-modules:    CI.Graph
+    other-modules:    CI.Executor
+                      CI.Graph
                       CI.Justfile
+                      CI.Plan
+                      CI.Scheduler
+                      CI.Sinks
     build-depends:
         , aeson
         , aeson-pretty
         , algebraic-graphs
+        , async
         , base
         , bytestring
         , containers
+        , directory
+        , filepath
         , process
         , text
         , text-display
