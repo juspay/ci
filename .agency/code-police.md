@@ -40,18 +40,23 @@ _Anti-patterns_:
 
 ## prefer-aeson-auto-derive
 
-Default to Generic-based auto-derivation (`deriving stock Generic` + `deriving anyclass FromJSON`/`ToJSON`). Hand-write `parseJSON`/`toJSON` only when auto-derivation genuinely can't express the mapping.
+Default to Generic-based auto-derivation (`deriving stock Generic` + `deriving anyclass FromJSON`/`ToJSON`). Hand-write `parseJSON`/`toJSON` only when auto-derivation genuinely can't express the mapping. **"Can't express" is a question about whether *any* shape of the type would let Generic emit the wire — not about whether the type as currently written can.** If you're hand-rolling because a field needs to be wrapped, projected, or indexed at serialization time, the field's *type* is what's wrong, not aeson's expressivity.
 
 _How to apply_:
 
 - **Name Haskell record fields to match the JSON keys.** aeson Generic ignores unknown fields, so missing keys aren't a parse error. Each omission is a deliberate design choice though — verify the field has no domain meaning your consumer needs before deciding it's ignorable. "Ignore" should mean "I read the source schema and this is runtime metadata", not "I haven't looked at what this field is for".
 - Mirror the wire structure as records; write a `data` → `data` projection function for any consumer that wants flattened data. The parser stays generic.
 - Only if the JSON keys can't match the Haskell field names (reserved words, casing constraints), use `genericParseJSON` with an `Options { fieldLabelModifier = ... }` modifier. Still derives, just with a transform.
+- **If a hand-rolled `toJSON` is transforming a field's shape** — wrapping a `Set` into a `Map` of objects, fabricating a constant key per element, projecting a sub-field, indexing by name — **ask whether the field's type should change so Generic can emit it directly.** A `Map RecipeName Dependency` (where `Dependency` is a proper record) needs no manual instance; a `Set RecipeName` plus a `toJSON` that synthesizes the per-dep object does. Same wire, different blast radius for the next change to the schema.
+- For closed sums whose constructor names don't match the wire (e.g. `ExitOnFailure` ↔ `"exit_on_failure"`), keep the auto-derive and parameterize the `Options` once: `defaultOptions { constructorTagModifier = camelTo2 '_', tagSingleConstructors = True }`. The `tagSingleConstructors = True` is load-bearing for single-constructor nullary sums — without it aeson emits an empty array instead of the tag string. A shared `Options` value beats N hand-rolled `toJSON ExitOnFailure = ...` clauses.
+- Singleton-sum smell isn't fixed by inlining the wire literal as a `Text` constant. It's fixed by making the sum a *real* sum — name every wire variant the spec admits in the closed type, even the ones you don't emit yet. The type stops being a singleton; the call sites stay type-safe.
 
 _Anti-patterns_:
 
 - Hand-writing `parseJSON = withObject "X" $ \o -> X <$> o .: "name" <*> o .: "age"` when the field names match the JSON. That's the literal contract Generic already gives you.
 - Renaming Haskell fields away from the JSON keys "for aesthetics" and then needing `fieldLabelModifier`. Match the wire; rename in the projection layer if anyone needs it.
+- Hand-rolling `toJSON` because the field is a `Set`/`[Text]`/`Bool` that has to become a structured object on the wire. The field type is the problem — promote it to a record so Generic does the work.
+- Deleting a sum type because today it has one constructor and inlining the wire literal at the call site. The right move is to widen the sum to every variant the schema admits and keep one constructor in active use.
 
 ## module-needs-description
 
