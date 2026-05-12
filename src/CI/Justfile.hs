@@ -14,6 +14,7 @@ module CI.Justfile
     Recipe (..),
     Dep (..),
     Attribute (..),
+    Os (..),
 
     -- * Fetching
     FetchError (..),
@@ -74,15 +75,45 @@ data Parameter = Parameter
 instance FromJSON Parameter where
   parseJSON = genericParseJSON defaultOptions {fieldLabelModifier = dropWhileEnd (== '_')}
 
--- | A recipe-level attribute. Named cases cover the attributes this runner interprets today; everything else (including future attributes just may add) round-trips opaquely as 'Other'. JSON shapes mirror just's own encoding: flag attributes are bare strings (@"parallel"@); parameterized ones are single-key objects (@{"metadata": ["..."]}@, @{"group": "..."}@).
+-- | A recipe-level attribute. Named cases cover the attributes this runner interprets today; everything else (including future attributes just may add) round-trips opaquely as 'Other'. JSON shapes mirror just's own encoding: flag attributes are bare strings (@"parallel"@, @"linux"@); parameterized ones are single-key objects (@{"metadata": ["..."]}@, @{"group": "..."}@).
 data Attribute
   = Parallel
   | Metadata [Text]
+  | Os Os
   | Other Value
   deriving stock (Generic, Show)
 
+-- | Host-OS gate. A recipe marked with one of these is only enabled on the matching host; multiple gates widen the disjunction (@[linux] [macos] foo:@ enables @foo@ on either). @Unix@ subsumes the BSDs and macOS, per just's own [conditional attribute](https://github.com/casey/just/blob/1.49.0/README.md) table.
+data Os
+  = Linux
+  | Macos
+  | Windows
+  | Unix
+  | Freebsd
+  | Openbsd
+  | Netbsd
+  | Dragonfly
+  deriving stock (Generic, Show, Eq, Ord, Bounded, Enum)
+
+-- | Mapping from just's bare-string OS gate to its 'Os' constructor.
+osFromText :: Text -> Maybe Os
+osFromText = flip lookup osTable
+  where
+    osTable :: [(Text, Os)]
+    osTable =
+      [ ("linux", Linux),
+        ("macos", Macos),
+        ("windows", Windows),
+        ("unix", Unix),
+        ("freebsd", Freebsd),
+        ("openbsd", Openbsd),
+        ("netbsd", Netbsd),
+        ("dragonfly", Dragonfly)
+      ]
+
 instance FromJSON Attribute where
   parseJSON (String "parallel") = pure Parallel
+  parseJSON (String t) | Just os <- osFromText t = pure (Os os)
   parseJSON v@(Object o)
     | Just metas <- KeyMap.lookup "metadata" o = Metadata <$> parseJSON metas
     | otherwise = pure (Other v)
