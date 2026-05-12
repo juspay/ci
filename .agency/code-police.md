@@ -29,14 +29,12 @@ _How to apply_:
 
 - Use `deriving stock Generic` + `deriving anyclass FromJSON` (or `ToJSON`) and let aeson read the field names directly off the record.
 - If the JSON keys differ from the Haskell field names, use `genericParseJSON` with an `Options { fieldLabelModifier = ... }` modifier. Still derives — just with a transform.
-- Mirror the JSON structure as Haskell records; if the on-the-wire shape is nested, mirror that, then write a `data` → `data` projection function. The parser stays generic; the projection stays explicit.
+- Mirror the JSON structure as Haskell records when each nested object carries distinct domain info; project in plain code afterwards. If a wire wrapper has no domain meaning of its own (typically a single-field object whose field _is_ the identifier, e.g. `{recipe: "name", ...}`), inline the extraction in `parseJSON` rather than introducing a noise newtype just to feed auto-derive.
 
 _Anti-patterns_:
 
 - Hand-writing `parseJSON = withObject "X" $ \o -> X <$> o .: "name" <*> o .: "age"` when the field names match. That's the literal contract Generic already gives you.
-- Squashing nested objects at parse time *when those objects carry distinct domain info*. Mirror the wire structure as Haskell records when each field carries meaning; project in plain code afterwards.
-
-_Exception_: when a wire wrapper is a single-field object around what's semantically one identifier (e.g., `{recipe: "name", arguments: ignored}`) and the other fields will always be ignored in Haskell, a one-line `parseJSON` that extracts the inner value is acceptable. The wrapper carries no domain info of its own; mirroring it produces a noise newtype that exists only to be projected away.
+- Squashing nested objects at parse time *when those objects carry distinct domain info*. Mirror those; project in plain code afterwards.
 
 ## module-needs-description
 
