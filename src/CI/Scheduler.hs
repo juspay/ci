@@ -25,7 +25,7 @@ import Data.Foldable (find)
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import qualified Data.Map.Strict as Map
 import Data.Text.Display (Display (..))
-import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar, tryReadMVar)
 import System.Exit (ExitCode (..))
 
 -- | How to execute one recipe's body. Takes only the execution-side
@@ -59,9 +59,12 @@ cancelAll cache = do
   -- Snapshot-and-clear under one atomic op so an in-flight 'scheduleNode'
   -- can't insert after we'd already iterated and skip the cancel.
   m <- atomicModifyIORef' cache (\old -> (Map.empty, old))
-  -- 'readMVar' is safe: every entry was 'putMVar'-populated before becoming
-  -- visible in the cache (see 'scheduleNode').
-  mapM_ (\mv -> readMVar mv >>= cancel) (Map.elems m)
+  -- 'tryReadMVar' rather than 'readMVar': a slot can be empty if a
+  -- 'scheduleNode' caller was killed by an async exception between
+  -- reserving the slot and putting the Async in. Those slots have no
+  -- Async to cancel, so skip them — 'readMVar' would deadlock waiting on
+  -- a put that will never happen.
+  mapM_ (\mv -> tryReadMVar mv >>= mapM_ cancel) (Map.elems m)
 
 -- | Look up (or create) the 'Async' for @name@. We reserve-slot-first to
 -- avoid speculative work under the race of two concurrent first-time
@@ -69,6 +72,11 @@ cancelAll cache = do
 -- atomically. The winner — whoever's 'MVar' got into the map — spawns the
 -- 'Async' and fills the slot; the loser drops its empty 'MVar' and blocks
 -- on 'readMVar' over the winner's. No async is spawned speculatively.
+--
+-- An async exception between the atomic insert and 'putMVar' would leave
+-- an empty slot visible to 'cancelAll'; that case is handled there with
+-- 'tryReadMVar', not by wrapping this region in 'mask_' (which would also
+-- mask the spawned 'Async' and defeat cancellation).
 scheduleNode ::
   Exec ->
   Plan ->
