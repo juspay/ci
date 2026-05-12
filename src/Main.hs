@@ -17,7 +17,7 @@ import CI.Graph (reachableSubgraph)
 import CI.Justfile (RecipeName, fetchDump, recipeDeps)
 import CI.Plan (planFromRoot)
 import CI.Scheduler (runPlan)
-import qualified CI.Sinks as Sinks
+import CI.Sinks (Sinks (..), newLiveTail)
 import Data.Aeson.Encode.Pretty (encodePretty)
 import qualified Data.ByteString.Lazy.Char8 as BL
 import Data.String (fromString)
@@ -47,12 +47,8 @@ runRecipe :: RecipeName -> IO ()
 runRecipe root = do
   recipes <- dieOnLeft =<< fetchDump
   plan <- dieOnLeft (planFromRoot root recipes)
-  liveTail <- Sinks.newLiveTail stderr
-  let sinks =
-        Sinks.Sinks
-          { Sinks.logDir = Just ".ci-logs",
-            Sinks.liveTail = Just liveTail
-          }
+  tail' <- newLiveTail stderr
+  let sinks = Sinks {logDir = Just ".ci-logs", liveTail = Just tail'}
   code <- runPlan (exec sinks) plan root
   exitWith code
 
