@@ -34,7 +34,7 @@ import CI.ProcessCompose (ProcessCompose, toProcessCompose)
 import CI.Runner (ServerMode (..), runPipeline)
 import CI.Snapshot (withSnapshotWorktree)
 import Control.Applicative (many, (<|>))
-import Control.Concurrent.Async (link, withAsync)
+import Control.Concurrent.Async (link, waitCatch, withAsync)
 import qualified Data.ByteString as BS
 import Data.Foldable (for_)
 import Data.Text (Text)
@@ -98,7 +98,11 @@ runStrict extraArgs = do
     pc <- buildProcessCompose (Just snap)
     withAsync (runObserver sockPath [postConsumer coords sha]) $ \obs -> do
       link obs
-      runPipeline (UnixSocket sockPath) extraArgs pc >>= exitWith
+      ec <- runPipeline (UnixSocket sockPath) extraArgs pc
+      -- Wait for the observer to drain remaining events (the WS closes when
+      -- process-compose exits, so this is bounded by the close handshake).
+      _ <- waitCatch obs
+      exitWith ec
 
 -- | Translate a single 'ProcessStateEvent' into at most one 'postStatus'
 -- call, under the @ci/\<recipe\>@ context. Non-terminal states without a

@@ -27,7 +27,6 @@ import Control.Exception (SomeException, try)
 import Data.Aeson (FromJSON, eitherDecodeStrict)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (for_)
-import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import GHC.Generics (Generic)
 import qualified Network.Socket as S
@@ -40,16 +39,15 @@ import System.IO (hPutStrLn, stderr)
 -- decoded; aeson ignores the rest.
 data ProcessStateEvent = ProcessStateEvent
   { -- | @true@ for events from the initial replay on connect, @omitempty@
-    -- (i.e. absent) for live transitions — modelled as @Maybe Bool@ and
-    -- defaulted to 'False' via 'isSnapshot'.
+    -- (i.e. absent) for live transitions. We process both kinds identically
+    -- — posting "pending" for a recipe that's already running is idempotent
+    -- on GitHub's side, and processing the snapshot catches recipes whose
+    -- @Running@ event preceded our connection.
     snapshot :: Maybe Bool,
     state :: ProcessState
   }
   deriving stock (Show, Generic)
   deriving anyclass (FromJSON)
-
-isSnapshot :: ProcessStateEvent -> Bool
-isSnapshot = fromMaybe False . snapshot
 
 -- | Subset of process-compose's @ProcessState@ this observer cares about.
 data ProcessState = ProcessState
@@ -92,9 +90,7 @@ runObserver sockPath consumers = do
         Right (bs :: BSL.ByteString) -> do
           case eitherDecodeStrict (BSL.toStrict bs) of
             Left err -> hPutStrLn stderr $ "observer: decode error: " <> err
-            Right ev
-              | isSnapshot ev -> pure ()
-              | otherwise -> for_ consumers ($ ev)
+            Right ev -> for_ consumers ($ ev)
           loop conn
 
 -- | Block (with a 100-attempt × 100ms backoff = ~10s ceiling) until the UDS
