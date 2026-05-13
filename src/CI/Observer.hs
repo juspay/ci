@@ -110,11 +110,12 @@ runObserver sockPath consumers = do
 -- | Block (with a 100-attempt × 100ms backoff = ~10s ceiling) until the UDS
 -- path exists on disk. Process-compose can take a couple of seconds to
 -- create the socket during startup; if we still don't see it after 10s,
--- the next 'S.connect' call will fail loudly.
+-- log the timeout explicitly — the next 'S.connect' call will then fail
+-- with ENOENT, but at least the user sees why.
 waitForSocket :: FilePath -> IO ()
 waitForSocket path = go (100 :: Int)
   where
-    go 0 = pure ()
+    go 0 = hPutStrLn stderr $ "observer: timed out waiting 10s for " <> path
     go n = do
       exists <- doesPathExist path
       if exists
