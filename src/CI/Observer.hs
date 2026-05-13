@@ -1,8 +1,4 @@
-{-# LANGUAGE DeriveAnyClass #-}
-{-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE NumericUnderscores #-}
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
@@ -12,65 +8,21 @@
 -- fan-out shape is deliberate so a future MCP-server consumer can be added
 -- without retrofitting.
 module CI.Observer
-  ( -- * Wire format
-    ProcessState (..),
-    ProcessStatus (..),
-
-    -- * Running the observer
-    Consumer,
+  ( Consumer,
     runObserver,
   )
 where
 
+import CI.ProcessCompose (ProcessState, ProcessStateEvent (..))
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
-import Data.Aeson (FromJSON (parseJSON), eitherDecodeStrict, withText)
+import Data.Aeson (eitherDecodeStrict)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (for_)
-import Data.Text (Text)
-import GHC.Generics (Generic)
 import qualified Network.Socket as S
 import qualified Network.WebSockets as WS
 import System.Directory (doesPathExist)
 import System.IO (hPutStrLn, stderr)
-
--- | The four process-compose states that map onto a GitHub commit status.
--- Everything else (Pending, Launching, Restarting, …) lands in 'PsOther'
--- and is silently dropped by consumers that only care about the four.
--- Typed (rather than left as a raw 'Text') so a typo or an upstream rename
--- becomes a pattern-match exhaustiveness warning instead of a silent miss.
-data ProcessStatus
-  = PsRunning
-  | PsCompleted
-  | PsSkipped
-  | PsErrored
-  | PsOther Text
-  deriving stock (Show, Eq)
-
-instance FromJSON ProcessStatus where
-  parseJSON = withText "ProcessStatus" $ \t -> pure $ case t of
-    "Running" -> PsRunning
-    "Completed" -> PsCompleted
-    "Skipped" -> PsSkipped
-    "Error" -> PsErrored
-    other -> PsOther other
-
--- | Subset of process-compose's @ProcessState@ this observer cares about.
-data ProcessState = ProcessState
-  { name :: Text,
-    status :: ProcessStatus,
-    exit_code :: Int
-  }
-  deriving stock (Show, Generic)
-  deriving anyclass (FromJSON)
-
--- | Mirrors process-compose's @ProcessStateEvent@ wire type. We model only
--- the @state@ field; the @snapshot@ flag (true on initial replay, omitted
--- on live transitions) is ignored — aeson drops unknown keys by default,
--- and the observer treats both kinds identically.
-newtype ProcessStateEvent = ProcessStateEvent {state :: ProcessState}
-  deriving stock (Show, Generic)
-  deriving anyclass (FromJSON)
 
 -- | Each consumer is invoked synchronously for every event; consumers
 -- should not block on slow I/O without their own forking, since the

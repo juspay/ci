@@ -11,7 +11,7 @@
 -- must not poison the recipe's own exit code.
 module CI.CommitStatus (postConsumer) where
 
-import CI.Observer (ProcessState (..), ProcessStatus (..))
+import CI.ProcessCompose (ProcessState (..), ProcessStatus (..))
 import CI.Resolve (RepoCoords (..), Sha (..))
 import CI.Subprocess (runSubprocess)
 import qualified CI.Subprocess as Sub

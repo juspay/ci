@@ -5,18 +5,23 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
--- | Assemble a @process-compose@ YAML config from a pre-validated execution graph.
+-- | The process-compose wire format, in both directions: the YAML config we
+-- emit to drive the pipeline, and the JSON events we decode from its
+-- @/process/states/ws@ WebSocket stream.
 module CI.ProcessCompose
-  ( -- * Schema
+  ( -- * Output schema (YAML config)
     ProcessCompose (..),
     Process (..),
     Dependency (..),
     Condition (..),
     Availability (..),
     RestartPolicy (..),
-
-    -- * Assembly
     toProcessCompose,
+
+    -- * Input schema (WebSocket events)
+    ProcessState (..),
+    ProcessStatus (..),
+    ProcessStateEvent (..),
 
     -- * Binary
     processComposeBin,
@@ -25,7 +30,7 @@ where
 
 import qualified Algebra.Graph.AdjacencyMap as G
 import CI.Justfile (RecipeName)
-import Data.Aeson (ToJSON (..), camelTo2, defaultOptions, genericToJSON)
+import Data.Aeson (FromJSON (parseJSON), ToJSON (..), camelTo2, defaultOptions, genericToJSON, withText)
 import Data.Aeson.Types (Options (..))
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -122,10 +127,49 @@ toProcessCompose :: Maybe FilePath -> (RecipeName -> Text) -> G.AdjacencyMap Rec
 toProcessCompose workingDir mkCommand g =
   ProcessCompose $ Map.fromSet mkProcess (G.vertexSet g)
   where
-    mkProcess name =
+    mkProcess recipe =
       Process
-        { command = mkCommand name,
-          depends_on = Map.fromSet (const (Dependency ProcessCompletedSuccessfully)) (G.postSet name g),
+        { command = mkCommand recipe,
+          depends_on = Map.fromSet (const (Dependency ProcessCompletedSuccessfully)) (G.postSet recipe g),
           availability = Availability {restart = ExitOnFailure, exit_on_skipped = True},
           working_dir = T.pack <$> workingDir
         }
+
+-- | The four process-compose states that map onto a GitHub commit status.
+-- Everything else (Pending, Launching, Restarting, …) lands in 'PsOther'
+-- and is silently dropped by consumers that only care about the four.
+-- Typed (rather than left as a raw 'Text') so a typo or an upstream rename
+-- becomes a pattern-match exhaustiveness warning instead of a silent miss.
+data ProcessStatus
+  = PsRunning
+  | PsCompleted
+  | PsSkipped
+  | PsErrored
+  | PsOther Text
+  deriving stock (Show, Eq)
+
+instance FromJSON ProcessStatus where
+  parseJSON = withText "ProcessStatus" $ \t -> pure $ case t of
+    "Running" -> PsRunning
+    "Completed" -> PsCompleted
+    "Skipped" -> PsSkipped
+    "Error" -> PsErrored
+    other -> PsOther other
+
+-- | Subset of process-compose's @ProcessState@ (per
+-- @src\/types\/process.go@) we care about. Aeson ignores extra fields.
+data ProcessState = ProcessState
+  { name :: Text,
+    status :: ProcessStatus,
+    exit_code :: Int
+  }
+  deriving stock (Show, Generic)
+  deriving anyclass (FromJSON)
+
+-- | Mirrors process-compose's @ProcessStateEvent@ wire type. We model only
+-- the @state@ field; the @snapshot@ flag (true on initial replay, omitted
+-- on live transitions) is ignored — aeson drops unknown keys by default,
+-- and the observer treats both kinds identically.
+newtype ProcessStateEvent = ProcessStateEvent {state :: ProcessState}
+  deriving stock (Show, Generic)
+  deriving anyclass (FromJSON)
