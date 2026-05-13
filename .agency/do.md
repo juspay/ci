@@ -31,9 +31,4 @@ Verify via exit code and stdout (no remote CI status check needed locally).
 
 ## Documentation
 
-- `README.md` — the user-facing description of what `ci` does. Update when:
-  - CLI surface changes (subcommands, flags, env-var gates).
-  - Mode behavior changes (what local vs strict do).
-  - Runtime-artifact layout changes (`.ci/` contents).
-  - Recipe-graph conventions change (e.g. the entrypoint metadata).
-  - A Roadmap item lands (delete the bullet) or a new direction is committed to (add a bullet).
+- `README.md` — keep up to date.

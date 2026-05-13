@@ -90,7 +90,7 @@ resolveSha = do
   result <- runSubprocess "git rev-parse HEAD" gitBin ["rev-parse", "HEAD"] ""
   pure $ case result of
     Left e -> Left (ResolveShaFailed e)
-    Right out -> Right (Sha (T.strip (T.pack out)))
+    Right out -> Right $ Sha $ T.strip $ T.pack out
 
 -- | Resolve the @\<owner\>/\<repo\>@ this checkout reports to via
 -- @gh repo view --json nameWithOwner@. Falls out as 'RepoCoords' so callers
