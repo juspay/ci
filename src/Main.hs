@@ -32,7 +32,6 @@ import Options.Applicative
   )
 import System.Exit (die, exitWith)
 
--- | The two things this binary can do with the assembled config.
 data Command = Run | DumpYaml
 
 main :: IO ()
@@ -49,7 +48,7 @@ parserInfo =
     (commandParser <**> helper)
     (fullDesc <> progDesc "Drive CI by translating the just recipe graph into process-compose")
 
--- | Two subcommands; bare invocation defaults to 'Run'.
+-- | Bare invocation defaults to 'Run' via the @\<|\> pure Run@ fallthrough.
 commandParser :: Parser Command
 commandParser =
   subparser
@@ -58,9 +57,7 @@ commandParser =
     )
     <|> pure Run
 
--- | Shared pipeline both subcommands consume: dump just, find the
--- entrypoint, restrict to its reachable subgraph, lower to an execution
--- graph, and assemble the process-compose schema.
+-- | Assemble the 'ProcessCompose' config shared by both subcommands.
 buildProcessCompose :: IO ProcessCompose
 buildProcessCompose = do
   recipes <- dieOnLeft =<< fetchDump
