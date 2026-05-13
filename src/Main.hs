@@ -18,14 +18,10 @@ module Main where
 
 import CI.CommitStatus
   ( CommitStatus (..),
-    RepoCoords,
-    Sha,
-    ensureCleanTree,
     mkContext,
     postStatus,
-    resolveRepoCoords,
-    resolveSha,
   )
+import CI.Resolve (RepoCoords, Sha, ensureCleanTree, resolveRepoCoords, resolveSha)
 import CI.Entrypoint (findEntrypoint)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (RecipeName, fetchDump, justBin)

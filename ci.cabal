@@ -16,6 +16,7 @@ executable ci
                       CI.Justfile
                       CI.Observer
                       CI.ProcessCompose
+                      CI.Resolve
                       CI.Runner
                       CI.Snapshot
     build-depends:
