@@ -23,13 +23,17 @@ module CI.CommitStatus
 
     -- * Posting
     postStatus,
+    buildPoster,
   )
 where
 
+import CI.Justfile (RecipeName)
 import CI.RecipeStep (RecipeStatus (..))
 import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Text.Display (display)
+import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..), die)
 import System.IO (hPutStrLn, stderr)
 import System.Process (readProcessWithExitCode)
@@ -123,3 +127,19 @@ wireDescription Pending = "Running"
 wireDescription Success = "Succeeded"
 wireDescription Failure = "Failed"
 wireDescription Error = "Errored"
+
+-- | Build the 'RecipeStatus' handler for a given recipe. When @CI=true@,
+-- resolve repo coordinates and HEAD SHA, then return a closure that maps
+-- each lifecycle event into a 'postStatus' call under the @ci/\<recipe\>@
+-- context. Otherwise return a no-op so dev runs stay silent. This env-driven
+-- branch is the only feature gate in the pipeline.
+buildPoster :: RecipeName -> IO (RecipeStatus -> IO ())
+buildPoster name = do
+  enabled <- (== Just "true") <$> lookupEnv "CI"
+  if not enabled
+    then pure (\_ -> pure ())
+    else do
+      coords <- resolveRepoCoords
+      sha <- resolveSha
+      let ctx = Context ("ci/" <> display name)
+      pure (postStatus coords sha ctx . toCommitStatus)

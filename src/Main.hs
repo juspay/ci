@@ -12,11 +12,11 @@
 module Main where
 
 import CI.Entrypoint (findEntrypoint)
-import CI.CommitStatus (Context (..), postStatus, resolveRepoCoords, resolveSha, toCommitStatus)
+import CI.CommitStatus (buildPoster)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (RecipeName, fetchDump)
 import CI.ProcessCompose (ProcessCompose, toProcessCompose)
-import CI.RecipeStep (RecipeStatus, runStep)
+import CI.RecipeStep (runStep)
 import CI.Runner (runPipeline)
 import Control.Applicative (many, (<|>))
 import qualified Data.ByteString as BS
@@ -39,7 +39,7 @@ import Options.Applicative
     (<**>),
   )
 import qualified Options.Applicative as O (command)
-import System.Environment (getExecutablePath, lookupEnv)
+import System.Environment (getExecutablePath)
 import System.Exit (die, exitWith)
 
 data Command
@@ -92,22 +92,6 @@ buildProcessCompose mkCommand = do
   reachable <- dieOnLeft $ reachableSubgraph root recipes
   graph <- dieOnLeft $ lowerToRunnerGraph reachable
   pure $ toProcessCompose mkCommand graph
-
--- | Construct the lifecycle poster for a given recipe. When @CI=true@,
--- resolve repo/SHA once and return a 'postStatus' closure under the
--- @ci/\<recipe\>@ context; otherwise return a no-op so dev runs stay silent.
--- The env-driven branch is the only feature gate in the pipeline; the YAML
--- always emits @run-step@.
-buildPoster :: RecipeName -> IO (RecipeStatus -> IO ())
-buildPoster name = do
-  enabled <- (== Just "true") <$> lookupEnv "CI"
-  if not enabled
-    then pure (\_ -> pure ())
-    else do
-      coords <- resolveRepoCoords
-      sha <- resolveSha
-      let ctx = Context ("ci/" <> display name)
-      pure (postStatus coords sha ctx . toCommitStatus)
 
 dieOnLeft :: Display e => Either e a -> IO a
 dieOnLeft = either (die . T.unpack . display) pure
