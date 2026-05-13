@@ -58,7 +58,7 @@ main = do
       pc <- buildProcessCompose =<< runStepCommand
       BS.putStr (Y.encode pc)
     RunStep name -> do
-      poster <- buildPoster name
+      poster <- dieOnLeft =<< buildPoster name
       runStep poster name >>= exitWith
 
 -- | Produce the per-recipe shell command process-compose runs: @\<self\>

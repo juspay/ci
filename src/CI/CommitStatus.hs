@@ -12,16 +12,20 @@
 -- 'postStatus' issues a single REST call per transition. Failures are
 -- logged to stderr and swallowed — a flaky API call must not poison the
 -- recipe's own exit code.
-module CI.CommitStatus (buildPoster) where
+module CI.CommitStatus
+  ( ResolveError (..),
+    buildPoster,
+  )
+where
 
 import CI.Justfile (RecipeName)
 import CI.RecipeStep (RecipeStatus (..))
 import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.Display (Display, display)
+import Data.Text.Display (Display (..), display)
 import System.Environment (lookupEnv)
-import System.Exit (ExitCode (..), die)
+import System.Exit (ExitCode (..))
 import System.IO (hPutStrLn, stderr)
 import System.Process (readProcessWithExitCode)
 import System.Which (staticWhich)
@@ -60,28 +64,44 @@ newtype Context = Context Text
 mkContext :: Display a => a -> Context
 mkContext name = Context ("ci/" <> display name)
 
-resolveSha :: IO Sha
+-- | Failures from 'resolveSha' / 'resolveRepoCoords'. Kept as a single sum so
+-- the top-level boundary ('main') has one type to display + die on, and so
+-- a future caller that wants to e.g. fall back to a different coord source
+-- can pattern-match without parsing strings.
+data ResolveError
+  = ResolveShaFailed Int String
+  | ResolveRepoFailed Int String
+  | UnexpectedNameWithOwner String
+  deriving stock (Show)
+
+instance Display ResolveError where
+  displayBuilder (ResolveShaFailed n err) =
+    "git rev-parse HEAD failed (" <> displayBuilder n <> "): " <> displayBuilder (T.pack err)
+  displayBuilder (ResolveRepoFailed n err) =
+    "gh repo view failed (" <> displayBuilder n <> "): " <> displayBuilder (T.pack err)
+  displayBuilder (UnexpectedNameWithOwner out) =
+    "unexpected nameWithOwner from gh: " <> displayBuilder (T.pack out)
+
+resolveSha :: IO (Either ResolveError Sha)
 resolveSha = do
   (ec, out, err) <- readProcessWithExitCode gitBin ["rev-parse", "HEAD"] ""
-  case ec of
-    ExitSuccess -> pure $ Sha (T.strip (T.pack out))
-    ExitFailure n ->
-      die $ "git rev-parse HEAD failed (" <> show n <> "): " <> err
+  pure $ case ec of
+    ExitSuccess -> Right $ Sha (T.strip (T.pack out))
+    ExitFailure n -> Left (ResolveShaFailed n err)
 
-resolveRepoCoords :: IO RepoCoords
+resolveRepoCoords :: IO (Either ResolveError RepoCoords)
 resolveRepoCoords = do
   (ec, out, err) <-
     readProcessWithExitCode
       ghBin
       ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]
       ""
-  case ec of
-    ExitFailure n ->
-      die $ "gh repo view failed (" <> show n <> "): " <> err
+  pure $ case ec of
+    ExitFailure n -> Left (ResolveRepoFailed n err)
     ExitSuccess ->
       case T.splitOn "/" (T.strip (T.pack out)) of
-        [o, r] | not (T.null o), not (T.null r) -> pure (RepoCoords o r)
-        _ -> die $ "unexpected nameWithOwner from gh: " <> out
+        [o, r] | not (T.null o), not (T.null r) -> Right (RepoCoords o r)
+        _ -> Left (UnexpectedNameWithOwner out)
 
 postStatus :: RepoCoords -> Sha -> Context -> CommitStatus -> IO ()
 postStatus coords (Sha sha) (Context ctx) status = do
@@ -128,12 +148,19 @@ wireDescription Error = "Errored"
 -- each lifecycle event into a 'postStatus' call under the @ci/\<recipe\>@
 -- context. Otherwise return a no-op so dev runs stay silent. This env-driven
 -- branch is the only feature gate in the pipeline.
-buildPoster :: RecipeName -> IO (RecipeStatus -> IO ())
+--
+-- Resolution failures are returned as 'Left' so the caller (the boundary)
+-- decides how to surface them, rather than 'die'-ing deep in the call graph
+-- and conflating "GitHub auth broken" with "this recipe failed".
+buildPoster :: RecipeName -> IO (Either ResolveError (RecipeStatus -> IO ()))
 buildPoster name = do
   enabled <- (== Just "true") <$> lookupEnv "CI"
   if not enabled
-    then pure (\_ -> pure ())
+    then pure (Right (\_ -> pure ()))
     else do
-      coords <- resolveRepoCoords
-      sha <- resolveSha
-      pure (postStatus coords sha (mkContext name) . toCommitStatus)
+      coordsE <- resolveRepoCoords
+      shaE <- resolveSha
+      pure $ do
+        coords <- coordsE
+        sha <- shaE
+        Right (postStatus coords sha (mkContext name) . toCommitStatus)
