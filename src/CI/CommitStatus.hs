@@ -17,7 +17,8 @@ module CI.CommitStatus
     -- * Resolved coordinates
     RepoCoords (..),
     Sha (..),
-    Context (..),
+    Context,
+    mkContext,
     resolveRepoCoords,
     resolveSha,
 
@@ -32,7 +33,7 @@ import CI.RecipeStep (RecipeStatus (..))
 import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.Display (display)
+import Data.Text.Display (Display, display)
 import System.Environment (lookupEnv)
 import System.Exit (ExitCode (..), die)
 import System.IO (hPutStrLn, stderr)
@@ -62,8 +63,16 @@ data RepoCoords = RepoCoords {owner :: Text, repo :: Text}
 newtype Sha = Sha Text
   deriving newtype (Show, Eq, IsString)
 
+-- | A GitHub status-check context (the unique label that groups posts of the
+-- same check, shown on the PR's checks panel). Construct via 'mkContext';
+-- the constructor is intentionally hidden so the @ci/\<recipe\>@ naming
+-- convention lives in one place.
 newtype Context = Context Text
   deriving newtype (Show, Eq, IsString)
+
+-- | The single source of truth for status-check context names: @ci/\<recipe\>@.
+mkContext :: Display a => a -> Context
+mkContext name = Context ("ci/" <> display name)
 
 resolveSha :: IO Sha
 resolveSha = do
@@ -141,5 +150,4 @@ buildPoster name = do
     else do
       coords <- resolveRepoCoords
       sha <- resolveSha
-      let ctx = Context ("ci/" <> display name)
-      pure (postStatus coords sha ctx . toCommitStatus)
+      pure (postStatus coords sha (mkContext name) . toCommitStatus)
