@@ -12,7 +12,7 @@
 module Main where
 
 import CI.Entrypoint (findEntrypoint)
-import CI.CommitStatus (buildPoster)
+import CI.CommitStatus (buildPoster, populatePosterEnv)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (RecipeName, fetchDump)
 import CI.ProcessCompose (ProcessCompose, toProcessCompose)
@@ -39,7 +39,8 @@ import Options.Applicative
     (<**>),
   )
 import qualified Options.Applicative as O (command)
-import System.Environment (getExecutablePath)
+import Control.Monad (when)
+import System.Environment (getExecutablePath, lookupEnv)
 import System.Exit (die, exitWith)
 
 data Command
@@ -52,13 +53,15 @@ main = do
   cmd <- execParser parserInfo
   case cmd of
     Run extraArgs -> do
+      strict <- (== Just "true") <$> lookupEnv "CI"
+      when strict $ dieOnLeft =<< populatePosterEnv
       pc <- buildProcessCompose =<< runStepCommand
       runPipeline extraArgs pc >>= exitWith
     DumpYaml -> do
       pc <- buildProcessCompose =<< runStepCommand
       BS.putStr (Y.encode pc)
     RunStep name -> do
-      poster <- dieOnLeft =<< buildPoster name
+      poster <- buildPoster name
       runStep poster name >>= exitWith
 
 -- | Produce the per-recipe shell command process-compose runs: @\<self\>

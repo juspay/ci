@@ -6,14 +6,15 @@
 
 -- | Adapt a recipe's lifecycle 'RecipeStatus' onto the GitHub commit-status
 -- wire format via the @gh@ CLI. Repo coordinates and HEAD SHA are resolved
--- once per @run-step@ invocation (i.e. once per recipe in Phase 1, since
--- process-compose forks a fresh wrapper for each vertex); Phase 2's
--- central observer will collapse that to once per pipeline run.
+-- once at the top of @main@'s @Run@ branch ('populatePosterEnv') and
+-- exported as env vars so each @run-step@ subprocess just reads them
+-- ('buildPoster') instead of re-shelling out to @gh@ and @git@.
 -- 'postStatus' issues a single REST call per transition. Failures are
 -- logged to stderr and swallowed — a flaky API call must not poison the
 -- recipe's own exit code.
 module CI.CommitStatus
   ( ResolveError (..),
+    populatePosterEnv,
     buildPoster,
   )
 where
@@ -24,7 +25,7 @@ import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display (..), display)
-import System.Environment (lookupEnv)
+import System.Environment (lookupEnv, setEnv)
 import System.Exit (ExitCode (..))
 import System.IO (hPutStrLn, stderr)
 import System.Process (readProcessWithExitCode)
@@ -142,20 +143,36 @@ wireDescription Success = "Succeeded"
 wireDescription Failure = "Failed"
 wireDescription Error = "Errored"
 
--- | Build the 'RecipeStatus' handler for a given recipe. When @CI=true@,
--- resolve repo coordinates and HEAD SHA, then return a closure that maps
--- each lifecycle event into a 'postStatus' call under the @ci/\<recipe\>@
--- context. Otherwise return a no-op so dev runs stay silent. This env-driven
--- branch is the only feature gate in the pipeline.
---
--- Resolution failures are returned as 'Left' so the caller (the boundary)
--- decides how to surface them, rather than 'die'-ing deep in the call graph
--- and conflating "GitHub auth broken" with "this recipe failed".
-buildPoster :: RecipeName -> IO (Either ResolveError (RecipeStatus -> IO ()))
+-- | Resolve repo coordinates and HEAD SHA once, then publish them via the
+-- @CI_REPO_OWNER@, @CI_REPO_NAME@, and @CI_SHA@ environment variables so
+-- subsequent @run-step@ subprocesses can build posters without re-shelling
+-- to @gh@ / @git@. Intended to be called once at the top of @main@'s @Run@
+-- branch when strict mode is active.
+populatePosterEnv :: IO (Either ResolveError ())
+populatePosterEnv = do
+  coordsE <- resolveRepoCoords
+  shaE <- resolveSha
+  case (,) <$> coordsE <*> shaE of
+    Left e -> pure (Left e)
+    Right (coords, Sha sha) -> do
+      setEnv "CI_REPO_OWNER" (T.unpack coords.owner)
+      setEnv "CI_REPO_NAME" (T.unpack coords.repo)
+      setEnv "CI_SHA" (T.unpack sha)
+      pure (Right ())
+
+-- | Build the 'RecipeStatus' handler for a recipe by reading the env vars
+-- 'populatePosterEnv' is responsible for setting. All three present →
+-- real poster under the @ci/\<recipe\>@ context. Anything missing → no-op,
+-- so dev runs (where 'populatePosterEnv' never ran) stay silent. The "is
+-- posting enabled" decision lives in 'main', not here.
+buildPoster :: RecipeName -> IO (RecipeStatus -> IO ())
 buildPoster name = do
-  enabled <- (== Just "true") <$> lookupEnv "CI"
-  if not enabled
-    then pure (Right (\_ -> pure ()))
-    else do
-      let mkHandler coords sha = postStatus coords sha (mkContext name) . toCommitStatus
-      liftA2 mkHandler <$> resolveRepoCoords <*> resolveSha
+  ownerM <- lookupEnv "CI_REPO_OWNER"
+  repoM <- lookupEnv "CI_REPO_NAME"
+  shaM <- lookupEnv "CI_SHA"
+  case (ownerM, repoM, shaM) of
+    (Just o, Just r, Just s) ->
+      let coords = RepoCoords (T.pack o) (T.pack r)
+          sha = Sha (T.pack s)
+       in pure (postStatus coords sha (mkContext name) . toCommitStatus)
+    _ -> pure (\_ -> pure ())
