@@ -13,17 +13,7 @@
 -- attempt to stderr with a @gh:@ prefix so the output is visually distinct
 -- from per-recipe stdio. Posting failures are logged and swallowed — a
 -- flaky API call must not poison the recipe's own exit code.
-module CI.CommitStatus
-  ( -- * Wire vocabulary
-    CommitStatus (..),
-    Context,
-    mkContext,
-
-    -- * Posting
-    postStatus,
-    postConsumer,
-  )
-where
+module CI.CommitStatus (postConsumer) where
 
 import CI.Observer (ProcessState (..), ProcessStatus (..))
 import CI.Resolve (RepoCoords (..), Sha (..))
@@ -57,6 +47,10 @@ mkContext name = Context ("ci/" <> display name)
 data CommitStatus = Pending | Success | Failure | Error
   deriving stock (Show, Eq)
 
+-- | Issue one @gh api POST /repos/{owner}/{repo}/statuses/{sha}@ call and
+-- log the attempt to stderr with a @gh:@ prefix. Failures are logged with
+-- @FAILED@ and the exit code, never propagated — the recipe's exit code
+-- must not depend on whether a status post succeeded.
 postStatus :: RepoCoords -> Sha -> Context -> CommitStatus -> IO ()
 postStatus coords (Sha sha) (Context ctx) cs = do
   let endpoint =
