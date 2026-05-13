@@ -12,7 +12,7 @@
 module Main where
 
 import CI.Entrypoint (findEntrypoint)
-import CI.GitHubStatus (Context (..), postStatus, resolveRepoCoords, resolveSha)
+import CI.CommitStatus (Context (..), postStatus, resolveRepoCoords, resolveSha)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (RecipeName, fetchDump)
 import CI.ProcessCompose (Process (..), ProcessCompose (..), toProcessCompose)

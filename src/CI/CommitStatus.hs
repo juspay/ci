@@ -9,7 +9,7 @@
 -- once at startup; 'postStatus' then posts a single REST call per
 -- transition. Failures are logged to stderr and swallowed — a flaky API
 -- call must not poison the recipe's own exit code.
-module CI.GitHubStatus
+module CI.CommitStatus
   ( -- * Resolved coordinates
     RepoCoords (..),
     Sha (..),
