@@ -148,11 +148,11 @@ postStatus coords (Sha sha) (Context ctx) status = do
           "description=" <> T.unpack (wireDescription status)
         ]
   (ec, _, ghStderr) <- readProcessWithExitCode ghBin args ""
+  let line = "gh: " <> T.unpack ctx <> " " <> T.unpack (wireState status)
   case ec of
-    ExitSuccess -> pure ()
+    ExitSuccess -> hPutStrLn stderr line
     ExitFailure n ->
-      hPutStrLn stderr $
-        "gh status post failed for " <> T.unpack ctx <> " (" <> show n <> "): " <> ghStderr
+      hPutStrLn stderr $ line <> " FAILED (" <> show n <> "): " <> ghStderr
 
 wireState :: CommitStatus -> Text
 wireState Pending = "pending"
