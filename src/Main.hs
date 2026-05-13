@@ -102,10 +102,14 @@ runStrict runDir extraArgs = do
   withSnapshotWorktree snapPath $ do
     pc <- buildProcessCompose (Just snapPath)
     withAsync (runObserver sockPath [postConsumer coords sha]) $ \obs -> do
+      -- 'link' propagates an observer crash to this thread (so an
+      -- observer-side exception aborts the pipeline rather than silently
+      -- proceeding with no status posts). 'waitCatch' after the pipeline
+      -- finishes lets the observer drain queued events — process-compose's
+      -- WS closes on its own shutdown, so this is bounded by the close
+      -- handshake.
       link obs
       ec <- runPipeline (UnixSocket sockPath) logPath extraArgs pc
-      -- Wait for the observer to drain remaining events (the WS closes when
-      -- process-compose exits, so this is bounded by the close handshake).
       _ <- waitCatch obs
       exitWith ec
 
