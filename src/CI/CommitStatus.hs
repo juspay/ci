@@ -17,7 +17,6 @@ module CI.CommitStatus (postConsumer) where
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
 import CI.Git (Sha)
 import CI.ProcessCompose (ProcessState (..), ProcessStatus (..))
-import qualified CI.Subprocess as Sub
 import Data.Foldable (for_)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -30,17 +29,16 @@ mkContext :: Display a => a -> Context
 mkContext recipe = contextFrom ("ci/" <> display recipe)
 
 -- | Issue one commit-status POST and log the attempt to stderr with a
--- @gh:@ prefix. Failures are logged with @FAILED@ and the exit code,
--- never propagated — the recipe's exit code must not depend on whether a
--- status post succeeded.
+-- @gh:@ prefix. Failures are logged via the 'SubprocessError' 'Display'
+-- instance and swallowed — the recipe's exit code must not depend on
+-- whether a status post succeeded.
 postStatus :: Repo -> Sha -> Context -> CommitStatus -> IO ()
 postStatus repo sha ctx cs = do
   result <- postCommitStatus repo sha CommitStatusPost {state = cs, context = ctx, description = describe cs}
   let line = "gh: " <> T.unpack (display ctx) <> " " <> T.unpack (display cs)
   case result of
     Right () -> hPutStrLn stderr line
-    Left e ->
-      hPutStrLn stderr $ line <> " FAILED (" <> show e.code <> "): " <> Sub.stderr e
+    Left e -> hPutStrLn stderr $ line <> " FAILED: " <> T.unpack (display e)
 
 -- | CI's human-readable label per state; sent as the @description@ field.
 describe :: CommitStatus -> Text
