@@ -6,9 +6,12 @@
 
 -- | Adapt a recipe's lifecycle 'RecipeStatus' onto the GitHub commit-status
 -- wire format via the @gh@ CLI. Repo coordinates and HEAD SHA are resolved
--- once at startup; 'postStatus' then posts a single REST call per
--- transition. Failures are logged to stderr and swallowed — a flaky API
--- call must not poison the recipe's own exit code.
+-- once per @run-step@ invocation (i.e. once per recipe in Phase 1, since
+-- process-compose forks a fresh wrapper for each vertex); Phase 2's
+-- central observer will collapse that to once per pipeline run.
+-- 'postStatus' issues a single REST call per transition. Failures are
+-- logged to stderr and swallowed — a flaky API call must not poison the
+-- recipe's own exit code.
 module CI.CommitStatus
   ( -- * Wire vocabulary
     CommitStatus (..),
