@@ -16,12 +16,12 @@ executable ci
                       CI.Justfile
                       CI.Observer
                       CI.ProcessCompose
-                      CI.RecipeStep
                       CI.Runner
                       CI.Snapshot
     build-depends:
         , aeson
         , algebraic-graphs
+        , async
         , base
         , bytestring
         , containers

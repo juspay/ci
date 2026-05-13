@@ -5,7 +5,11 @@
 -- 'ProcessCompose' config. The YAML is piped on stdin (@-f /dev/stdin@) so
 -- there is no temp-file lifecycle to manage; the runner's exit code is the
 -- pipeline's exit code.
-module CI.Runner (runPipeline) where
+module CI.Runner
+  ( ServerMode (..),
+    runPipeline,
+  )
+where
 
 import CI.ProcessCompose (ProcessCompose)
 import qualified Data.ByteString as BS
@@ -20,16 +24,25 @@ import System.Which (staticWhich)
 processComposeBin :: FilePath
 processComposeBin = $(staticWhich "process-compose")
 
+-- | Selects how process-compose's HTTP API surface is exposed (or not).
+-- 'NoServer' suppresses the API entirely — used for local-mode dev runs
+-- where nothing observes the state. 'UnixSocket' binds the API to a UDS at
+-- the given path — used in strict mode where 'CI.Observer' subscribes to
+-- the state-event stream over that socket.
+data ServerMode
+  = NoServer
+  | UnixSocket FilePath
+
 -- | Spawn @process-compose up@ with the encoded config on stdin, in headless
--- mode (TUI and HTTP server both disabled), and forward its exit code.
--- 'withCreateProcess' brackets the subprocess so the stdin handle is closed
--- and the child reaped even if 'BS.hPut' throws (e.g. broken pipe).
+-- (no TUI) mode, and forward its exit code. 'withCreateProcess' brackets the
+-- subprocess so the stdin handle is closed and the child reaped even if
+-- 'BS.hPut' throws (e.g. broken pipe).
 --
--- @extraArgs@ are appended verbatim after the baseline flags, so callers can
--- override or extend process-compose's behavior (e.g. @--log-level debug@,
--- @--ordered-shutdown@) without this module knowing the flag surface.
-runPipeline :: [String] -> ProcessCompose -> IO ExitCode
-runPipeline extraArgs pc =
+-- @extraArgs@ are appended verbatim after the server-mode flags, so callers
+-- can override or extend process-compose's behavior (e.g. @--log-level
+-- debug@) without this module knowing the flag surface.
+runPipeline :: ServerMode -> [String] -> ProcessCompose -> IO ExitCode
+runPipeline mode extraArgs pc =
   withCreateProcess cp $ \mhin _ _ ph -> case mhin of
     Nothing -> die "process-compose: stdin pipe was not created"
     Just hin -> do
@@ -38,7 +51,10 @@ runPipeline extraArgs pc =
       waitForProcess ph
   where
     cp =
-      (proc processComposeBin baseArgs)
+      (proc processComposeBin (baseArgs <> serverArgs <> extraArgs))
         { std_in = CreatePipe
         }
-    baseArgs = ["up", "-f", "/dev/stdin", "-t=false", "--no-server"] <> extraArgs
+    baseArgs = ["up", "-f", "/dev/stdin", "-t=false"]
+    serverArgs = case mode of
+      NoServer -> ["--no-server"]
+      UnixSocket path -> ["-U", "-u", path]

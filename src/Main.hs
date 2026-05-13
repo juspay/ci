@@ -1,30 +1,46 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Entry point. Three subcommands share an assembled 'ProcessCompose':
+-- | Entry point. Two subcommands share an assembled 'ProcessCompose':
 --
---   * @run [-- ARGS...]@ (the default): hand the config to @process-compose@
---     and execute the pipeline. Anything after @--@ is forwarded verbatim
---     to @process-compose up@.
+--   * @run [-- ARGS...]@ (the default): drive the pipeline. Anything after
+--     @--@ is forwarded verbatim to @process-compose up@.
 --   * @dump-yaml@: emit the @process-compose@ YAML on stdout.
---   * @run-step \<recipe\>@: lifecycle wrapper invoked by process-compose for
---     each vertex. Posts GitHub commit-status transitions when @CI=true@.
+--
+-- Two run modes, gated on @CI=true@:
+--
+--   * Local (@CI@ unset): live working tree, no status posting, no observer.
+--   * Strict (@CI=true@): refuse if the tree is dirty; snapshot HEAD to a
+--     transient @git worktree@; start process-compose with its API on a
+--     UDS; concurrently subscribe to its state-event stream from
+--     'CI.Observer' and post a GitHub commit status per transition.
 module Main where
 
+import CI.CommitStatus
+  ( CommitStatus (..),
+    RepoCoords,
+    Sha,
+    ensureCleanTree,
+    mkContext,
+    postStatus,
+    resolveRepoCoords,
+    resolveSha,
+  )
 import CI.Entrypoint (findEntrypoint)
-import CI.CommitStatus (buildPoster, ensureCleanTree, populatePosterEnv)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
-import CI.Justfile (RecipeName, fetchDump)
+import CI.Justfile (RecipeName, fetchDump, justBin)
+import CI.Observer (ProcessState (..), ProcessStateEvent (..), runObserver)
 import CI.ProcessCompose (ProcessCompose, toProcessCompose)
-import CI.RecipeStep (runStep)
-import CI.Runner (runPipeline)
+import CI.Runner (ServerMode (..), runPipeline)
 import CI.Snapshot (withSnapshotWorktree)
 import Control.Applicative (many, (<|>))
+import Control.Concurrent.Async (withAsync)
 import qualified Data.ByteString as BS
-import Data.String (fromString)
+import Data.Foldable (for_)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
+import Data.Time.Clock.POSIX (getPOSIXTime)
 import qualified Data.Yaml as Y
 import Options.Applicative
   ( Parser,
@@ -40,13 +56,14 @@ import Options.Applicative
     (<**>),
   )
 import qualified Options.Applicative as O (command)
-import System.Environment (getExecutablePath, lookupEnv)
+import System.Directory (getTemporaryDirectory)
+import System.Environment (lookupEnv)
 import System.Exit (die, exitWith)
+import System.FilePath ((</>))
 
 data Command
   = Run [String]
   | DumpYaml
-  | RunStep RecipeName
 
 main :: IO ()
 main = do
@@ -55,29 +72,57 @@ main = do
     Run extraArgs -> do
       strict <- (== Just "true") <$> lookupEnv "CI"
       if strict
-        then do
-          dieOnLeft =<< ensureCleanTree
-          dieOnLeft =<< populatePosterEnv
-          withSnapshotWorktree $ \snap -> do
-            pc <- buildProcessCompose (Just snap) =<< runStepCommand
-            runPipeline extraArgs pc >>= exitWith
-        else do
-          pc <- buildProcessCompose Nothing =<< runStepCommand
-          runPipeline extraArgs pc >>= exitWith
+        then runStrict extraArgs
+        else runLocal extraArgs
     DumpYaml -> do
-      pc <- buildProcessCompose Nothing =<< runStepCommand
+      pc <- buildProcessCompose Nothing
       BS.putStr (Y.encode pc)
-    RunStep name -> do
-      poster <- buildPoster name
-      runStep poster name >>= exitWith
 
--- | Produce the per-recipe shell command process-compose runs: @\<self\>
--- run-step \<name\>@. Absolute self-path is baked in because process-compose
--- spawns commands through a shell whose PATH may not contain this binary.
-runStepCommand :: IO (RecipeName -> Text)
-runStepCommand = do
-  self <- T.pack <$> getExecutablePath
-  pure $ \name -> self <> " run-step " <> display name
+-- | Local mode: live working tree, no observer, no status posts. Behavior
+-- is byte-identical to invoking @process-compose up@ on the dumped YAML.
+runLocal :: [String] -> IO ()
+runLocal extraArgs = do
+  pc <- buildProcessCompose Nothing
+  runPipeline NoServer extraArgs pc >>= exitWith
+
+-- | Strict mode: clean-tree refuse → resolve coords + SHA → snapshot HEAD
+-- via @git worktree@ → start process-compose with its API on a UDS →
+-- subscribe to state events and post commit statuses concurrently with the
+-- pipeline run.
+runStrict :: [String] -> IO ()
+runStrict extraArgs = do
+  dieOnLeft =<< ensureCleanTree
+  coords <- dieOnLeft =<< resolveRepoCoords
+  sha <- dieOnLeft =<< resolveSha
+  withSnapshotWorktree $ \snap -> do
+    sockPath <- pickSocketPath
+    pc <- buildProcessCompose (Just snap)
+    withAsync (runObserver sockPath [postConsumer coords sha]) $ \_ ->
+      runPipeline (UnixSocket sockPath) extraArgs pc >>= exitWith
+
+-- | Translate a single 'ProcessStateEvent' into at most one 'postStatus'
+-- call, under the @ci/\<recipe\>@ context. Non-terminal states without a
+-- 'CommitStatus' analogue (Pending, Launching, …) drop on the floor.
+postConsumer :: RepoCoords -> Sha -> ProcessStateEvent -> IO ()
+postConsumer coords sha (ProcessStateEvent _ ps) =
+  for_ (psToCommitStatus ps) (postStatus coords sha (mkContext (name ps)))
+
+psToCommitStatus :: ProcessState -> Maybe CommitStatus
+psToCommitStatus ps = case (status ps, exit_code ps) of
+  ("Running", _) -> Just Pending
+  ("Completed", 0) -> Just Success
+  ("Completed", _) -> Just Failure
+  ("Skipped", _) -> Just Error
+  ("Error", _) -> Just Error
+  _ -> Nothing
+
+-- | Path for the transient process-compose API UDS. Microsecond timestamp
+-- suffix so concurrent runs don't collide.
+pickSocketPath :: IO FilePath
+pickSocketPath = do
+  tmp <- getTemporaryDirectory
+  now <- getPOSIXTime
+  pure $ tmp </> ("ci-pc-" <> show (round (now * 1e6) :: Integer) <> ".sock")
 
 parserInfo :: ParserInfo Command
 parserInfo =
@@ -90,17 +135,22 @@ commandParser =
   subparser
     ( O.command "run" (info (Run <$> many (strArgument (metavar "-- ARGS..."))) (progDesc "Execute the CI pipeline via process-compose (default). Args after -- are passed through."))
         <> O.command "dump-yaml" (info (pure DumpYaml) (progDesc "Print the process-compose YAML to stdout"))
-        <> O.command "run-step" (info (RunStep . fromString <$> strArgument (metavar "RECIPE")) (progDesc "Run a single recipe with lifecycle reporting (invoked by process-compose)"))
     )
     <|> pure (Run [])
 
-buildProcessCompose :: Maybe FilePath -> (RecipeName -> Text) -> IO ProcessCompose
-buildProcessCompose workingDir mkCommand = do
+buildProcessCompose :: Maybe FilePath -> IO ProcessCompose
+buildProcessCompose workingDir = do
   recipes <- dieOnLeft =<< fetchDump
   root <- dieOnLeft $ findEntrypoint recipes
   reachable <- dieOnLeft $ reachableSubgraph root recipes
   graph <- dieOnLeft $ lowerToRunnerGraph reachable
-  pure $ toProcessCompose workingDir mkCommand graph
+  pure $ toProcessCompose workingDir recipeCommand graph
+
+-- | Per-vertex shell command: @\<absolute-just-path\> --no-deps \<recipe\>@.
+-- Absolute path baked in so process-compose's spawned shell finds @just@
+-- regardless of PATH.
+recipeCommand :: RecipeName -> Text
+recipeCommand n = T.pack justBin <> " --no-deps " <> display n
 
 dieOnLeft :: Display e => Either e a -> IO a
 dieOnLeft = either (die . T.unpack . display) pure

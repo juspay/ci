@@ -4,43 +4,43 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
--- | Adapt a recipe's lifecycle 'RecipeStatus' onto the GitHub commit-status
--- wire format via the @gh@ CLI. Repo coordinates and HEAD SHA are resolved
--- once at the top of @main@'s @Run@ branch ('populatePosterEnv') and
--- exported as env vars so each @run-step@ subprocess just reads them
--- ('buildPoster') instead of re-shelling out to @gh@ and @git@.
--- 'postStatus' issues a single REST call per transition. Failures are
--- logged to stderr and swallowed — a flaky API call must not poison the
--- recipe's own exit code.
+-- | GitHub commit-status wire format and the @gh@ CLI adapter. Repo
+-- coordinates and HEAD SHA are resolved once at the top of @main@'s @Run@
+-- branch and kept in scope for the duration of the run; the central
+-- observer ('CI.Observer') translates process-compose state events into
+-- 'postStatus' calls.
+--
+-- 'postStatus' issues a single REST call per transition and logs the
+-- attempt to stderr with a @gh:@ prefix so the output is visually distinct
+-- from per-recipe stdio. Posting failures are logged and swallowed — a
+-- flaky API call must not poison the recipe's own exit code.
 module CI.CommitStatus
-  ( ResolveError (..),
+  ( -- * Errors
+    ResolveError (..),
     ensureCleanTree,
-    populatePosterEnv,
-    buildPoster,
+
+    -- * Resolved coordinates
+    RepoCoords (..),
+    Sha (..),
+    Context,
+    mkContext,
+    resolveRepoCoords,
+    resolveSha,
+
+    -- * Wire vocabulary + posting
+    CommitStatus (..),
+    postStatus,
   )
 where
 
-import CI.Justfile (RecipeName)
-import CI.RecipeStep (RecipeStatus (..))
 import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display (..), display)
-import System.Environment (lookupEnv, setEnv)
 import System.Exit (ExitCode (..))
 import System.IO (hPutStrLn, stderr)
 import System.Process (readProcessWithExitCode)
 import System.Which (staticWhich)
-
--- | 'Error' is reserved for the wire format's out-of-band-failure slot; the
--- recipe lifecycle never produces it (see 'toCommitStatus').
-data CommitStatus = Pending | Success | Failure | Error
-  deriving stock (Show, Eq)
-
-toCommitStatus :: RecipeStatus -> CommitStatus
-toCommitStatus Running = Pending
-toCommitStatus Succeeded = Success
-toCommitStatus Failed = Failure
 
 ghBin :: FilePath
 ghBin = $(staticWhich "gh")
@@ -65,16 +65,22 @@ newtype Context = Context Text
 mkContext :: Display a => a -> Context
 mkContext name = Context ("ci/" <> display name)
 
--- | Failures from 'resolveSha' / 'resolveRepoCoords'. Kept as a single sum so
--- the top-level boundary ('main') has one type to display + die on, and so
--- a future caller that wants to e.g. fall back to a different coord source
--- can pattern-match without parsing strings.
+-- | The four GitHub commit-status states. The observer maps process-compose
+-- events to these: @Running@→'Pending', @Completed@+exit0→'Success',
+-- @Completed@+exit≠0→'Failure', @Skipped@/@Error@→'Error'.
+data CommitStatus = Pending | Success | Failure | Error
+  deriving stock (Show, Eq)
+
+-- | Failures from the resolve / clean-tree checks performed at the top of
+-- strict mode. Kept as a single sum so 'main' has one type to display + die
+-- on, and so a future caller that wants to fall back instead of dying can
+-- pattern-match without parsing strings.
 data ResolveError
   = ResolveShaFailed Int String
   | ResolveRepoFailed Int String
   | UnexpectedNameWithOwner String
   | GitStatusFailed Int String
-  | -- | The working tree has uncommitted changes; carries the @git status
+  | -- | Working tree has uncommitted changes; carries the @git status
     -- --porcelain@ lines so the user can see what's dirty.
     DirtyTree [Text]
   deriving stock (Show)
@@ -165,37 +171,3 @@ wireDescription Pending = "Running"
 wireDescription Success = "Succeeded"
 wireDescription Failure = "Failed"
 wireDescription Error = "Errored"
-
--- | Resolve repo coordinates and HEAD SHA once, then publish them via the
--- @CI_REPO_OWNER@, @CI_REPO_NAME@, and @CI_SHA@ environment variables so
--- subsequent @run-step@ subprocesses can build posters without re-shelling
--- to @gh@ / @git@. Intended to be called once at the top of @main@'s @Run@
--- branch when strict mode is active.
-populatePosterEnv :: IO (Either ResolveError ())
-populatePosterEnv = do
-  coordsE <- resolveRepoCoords
-  shaE <- resolveSha
-  case (,) <$> coordsE <*> shaE of
-    Left e -> pure (Left e)
-    Right (coords, Sha sha) -> do
-      setEnv "CI_REPO_OWNER" (T.unpack coords.owner)
-      setEnv "CI_REPO_NAME" (T.unpack coords.repo)
-      setEnv "CI_SHA" (T.unpack sha)
-      pure (Right ())
-
--- | Build the 'RecipeStatus' handler for a recipe by reading the env vars
--- 'populatePosterEnv' is responsible for setting. All three present →
--- real poster under the @ci/\<recipe\>@ context. Anything missing → no-op,
--- so dev runs (where 'populatePosterEnv' never ran) stay silent. The "is
--- posting enabled" decision lives in 'main', not here.
-buildPoster :: RecipeName -> IO (RecipeStatus -> IO ())
-buildPoster name = do
-  ownerM <- lookupEnv "CI_REPO_OWNER"
-  repoM <- lookupEnv "CI_REPO_NAME"
-  shaM <- lookupEnv "CI_SHA"
-  case (ownerM, repoM, shaM) of
-    (Just o, Just r, Just s) ->
-      let coords = RepoCoords (T.pack o) (T.pack r)
-          sha = Sha (T.pack s)
-       in pure (postStatus coords sha (mkContext name) . toCommitStatus)
-    _ -> pure (\_ -> pure ())
