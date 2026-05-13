@@ -4,15 +4,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
--- | GitHub commit-status wire format and the @gh@ CLI adapter. A migration
--- to @check-runs@, or to a different backend entirely (Bitbucket, Slack),
--- swaps this module — but the resolvers in "CI.Resolve" and the observer in
--- "CI.Observer" don't move.
---
--- 'postStatus' issues a single REST call per transition and logs the
--- attempt to stderr with a @gh:@ prefix so the output is visually distinct
--- from per-recipe stdio. Posting failures are logged and swallowed — a
--- flaky API call must not poison the recipe's own exit code.
+-- | GitHub commit-status wire format and the @gh@ CLI adapter. 'postStatus'
+-- issues a single REST call per transition and logs the attempt to stderr
+-- with a @gh:@ prefix so the output is visually distinct from per-recipe
+-- stdio. Posting failures are logged and swallowed — a flaky API call
+-- must not poison the recipe's own exit code.
 module CI.CommitStatus (postConsumer) where
 
 import CI.Observer (ProcessState (..), ProcessStatus (..))

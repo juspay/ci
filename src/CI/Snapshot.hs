@@ -6,10 +6,6 @@
 -- working tree mid-pipeline can't leak into later recipes, and (b)
 -- @git rev-parse HEAD@ from inside any recipe always returns the same
 -- pinned SHA — the one the user committed to test.
---
--- Future work: a remote-build path will likely swap the @git worktree@
--- splice here for a @git archive@-over-SSH variant; the bracket signature
--- ('withSnapshotWorktree') is the seam.
 module CI.Snapshot (withSnapshotWorktree) where
 
 import CI.Resolve (gitBin)

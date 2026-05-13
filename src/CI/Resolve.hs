@@ -5,12 +5,9 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 -- | Strict-mode preconditions: working-tree cleanliness, repo coordinates,
--- and HEAD SHA. Lives next to neither the reporting backend nor the
--- pipeline orchestrator because its volatility is independent: a GitHub-CI
--- platform that injects @GITHUB_SHA@/@GITHUB_REPOSITORY@ env vars changes
--- this module's resolvers without touching how commit statuses are posted,
--- and conversely a Bitbucket-pipelines backend swaps the posting layer
--- without affecting how we discover the SHA to post against.
+-- and HEAD SHA. Separated from the reporting backend so the resolvers
+-- (what @git@ / @gh@ tell us about the checkout) can evolve independently
+-- of how a status post is shaped on the wire.
 module CI.Resolve
   ( RepoCoords (..),
     Sha (..),
