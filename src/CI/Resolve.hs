@@ -22,12 +22,11 @@ module CI.Resolve
   )
 where
 
+import CI.Subprocess (SubprocessError, runSubprocess)
 import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display (..))
-import System.Exit (ExitCode (..))
-import System.Process (readProcessWithExitCode)
 import System.Which (staticWhich)
 
 ghBin :: FilePath
@@ -52,28 +51,24 @@ newtype Sha = Sha Text
   deriving newtype (Show, Eq, IsString)
 
 -- | Failures from the resolve / clean-tree checks performed at the top of
--- strict mode. Kept as a single sum so 'main' has one type to display + die
--- on, and so a future caller that wants to fall back instead of dying can
--- pattern-match without parsing strings.
+-- strict mode. Subprocess failures wrap 'SubprocessError' so the
+-- @binary failed (N): stderr@ formatting lives in one place.
 data ResolveError
-  = ResolveShaFailed Int String
-  | ResolveRepoFailed Int String
+  = ResolveShaFailed SubprocessError
+  | ResolveRepoFailed SubprocessError
   | UnexpectedNameWithOwner String
-  | GitStatusFailed Int String
+  | GitStatusFailed SubprocessError
   | -- | Working tree has uncommitted changes; carries the @git status
     -- --porcelain@ lines so the user can see what's dirty.
     DirtyTree [Text]
   deriving stock (Show)
 
 instance Display ResolveError where
-  displayBuilder (ResolveShaFailed n err) =
-    "git rev-parse HEAD failed (" <> displayBuilder n <> "): " <> displayBuilder (T.pack err)
-  displayBuilder (ResolveRepoFailed n err) =
-    "gh repo view failed (" <> displayBuilder n <> "): " <> displayBuilder (T.pack err)
+  displayBuilder (ResolveShaFailed e) = displayBuilder e
+  displayBuilder (ResolveRepoFailed e) = displayBuilder e
+  displayBuilder (GitStatusFailed e) = displayBuilder e
   displayBuilder (UnexpectedNameWithOwner out) =
     "unexpected nameWithOwner from gh: " <> displayBuilder (T.pack out)
-  displayBuilder (GitStatusFailed n err) =
-    "git status --porcelain failed (" <> displayBuilder n <> "): " <> displayBuilder (T.pack err)
   displayBuilder (DirtyTree paths) =
     "working tree is dirty (CI=true requires a clean tree); commit or stash first:\n"
       <> mconcat ["  " <> displayBuilder p <> "\n" | p <- paths]
@@ -83,37 +78,36 @@ instance Display ResolveError where
 -- tested; a dirty tree breaks that invariant by definition.
 ensureCleanTree :: IO (Either ResolveError ())
 ensureCleanTree = do
-  (ec, out, err) <- readProcessWithExitCode gitBin ["status", "--porcelain"] ""
-  pure $ case ec of
-    ExitFailure n -> Left (GitStatusFailed n err)
-    ExitSuccess ->
-      case filter (not . T.null) (T.lines (T.pack out)) of
-        [] -> Right ()
-        dirty -> Left (DirtyTree dirty)
+  result <- runSubprocess "git status --porcelain" gitBin ["status", "--porcelain"] ""
+  pure $ case result of
+    Left e -> Left (GitStatusFailed e)
+    Right out -> case filter (not . T.null) (T.lines (T.pack out)) of
+      [] -> Right ()
+      dirty -> Left (DirtyTree dirty)
 
 -- | Resolve the current HEAD SHA via @git rev-parse HEAD@. Used once at
 -- strict-mode startup so every commit-status post against this run targets
 -- the same commit.
 resolveSha :: IO (Either ResolveError Sha)
 resolveSha = do
-  (ec, out, err) <- readProcessWithExitCode gitBin ["rev-parse", "HEAD"] ""
-  pure $ case ec of
-    ExitSuccess -> Right $ Sha (T.strip (T.pack out))
-    ExitFailure n -> Left (ResolveShaFailed n err)
+  result <- runSubprocess "git rev-parse HEAD" gitBin ["rev-parse", "HEAD"] ""
+  pure $ case result of
+    Left e -> Left (ResolveShaFailed e)
+    Right out -> Right (Sha (T.strip (T.pack out)))
 
 -- | Resolve the @\<owner\>/\<repo\>@ this checkout reports to via
 -- @gh repo view --json nameWithOwner@. Falls out as 'RepoCoords' so callers
 -- never see a slash-separated string.
 resolveRepoCoords :: IO (Either ResolveError RepoCoords)
 resolveRepoCoords = do
-  (ec, out, err) <-
-    readProcessWithExitCode
+  result <-
+    runSubprocess
+      "gh repo view"
       ghBin
       ["repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner"]
       ""
-  pure $ case ec of
-    ExitFailure n -> Left (ResolveRepoFailed n err)
-    ExitSuccess ->
-      case T.splitOn "/" (T.strip (T.pack out)) of
-        [o, r] | not (T.null o), not (T.null r) -> Right (RepoCoords o r)
-        _ -> Left (UnexpectedNameWithOwner out)
+  pure $ case result of
+    Left e -> Left (ResolveRepoFailed e)
+    Right out -> case T.splitOn "/" (T.strip (T.pack out)) of
+      [o, r] | not (T.null o), not (T.null r) -> Right (RepoCoords o r)
+      _ -> Left (UnexpectedNameWithOwner out)

@@ -17,14 +17,14 @@ module CI.CommitStatus (postConsumer) where
 
 import CI.Observer (ProcessState (..), ProcessStatus (..))
 import CI.Resolve (RepoCoords (..), Sha (..))
+import CI.Subprocess (runSubprocess)
+import qualified CI.Subprocess as Sub
 import Data.Foldable (for_)
 import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
-import System.Exit (ExitCode (..))
 import System.IO (hPutStrLn, stderr)
-import System.Process (readProcessWithExitCode)
 import System.Which (staticWhich)
 
 ghBin :: FilePath
@@ -72,12 +72,12 @@ postStatus coords (Sha sha) (Context ctx) cs = do
           "-f",
           "description=" <> T.unpack (wireDescription cs)
         ]
-  (ec, _, ghStderr) <- readProcessWithExitCode ghBin args ""
+  result <- runSubprocess ("gh api statuses " <> wireState cs) ghBin args ""
   let line = "gh: " <> T.unpack ctx <> " " <> T.unpack (wireState cs)
-  case ec of
-    ExitSuccess -> hPutStrLn stderr line
-    ExitFailure n ->
-      hPutStrLn stderr $ line <> " FAILED (" <> show n <> "): " <> ghStderr
+  case result of
+    Right _ -> hPutStrLn stderr line
+    Left e ->
+      hPutStrLn stderr $ line <> " FAILED (" <> show e.code <> "): " <> Sub.stderr e
 
 wireState :: CommitStatus -> Text
 wireState Pending = "pending"

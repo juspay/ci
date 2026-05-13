@@ -26,6 +26,7 @@ module CI.Justfile
   )
 where
 
+import CI.Subprocess (SubprocessError, runSubprocess)
 import Data.Aeson (FromJSON (parseJSON), FromJSONKey, Options (..), ToJSON, ToJSONKey, Value (Object, String), defaultOptions, eitherDecodeStrict, genericParseJSON)
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Bifunctor (bimap)
@@ -37,8 +38,6 @@ import qualified Data.Text as T
 import Data.Text.Display (Display (..))
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
-import System.Exit (ExitCode (..))
-import System.Process (readProcessWithExitCode)
 import System.Which (staticWhich)
 
 -- | Absolute path to the @just@ binary, baked in at compile time via Nix.
@@ -144,22 +143,21 @@ newtype Dump = Dump {recipes :: Map.Map RecipeName Recipe}
 
 -- | Failures from 'fetchDump'.
 data FetchError
-  = -- | The @just@ subprocess exited non-zero. Carries the exit code and the captured stderr.
-    FetchProcessError Int String
+  = -- | The @just@ subprocess exited non-zero.
+    FetchProcessError SubprocessError
   | -- | The @just@ subprocess succeeded but its JSON output didn't decode. Carries aeson's underlying message.
     FetchParseError String
   deriving stock (Show)
 
 instance Display FetchError where
-  displayBuilder (FetchProcessError n stderr) =
-    "just exited with code " <> displayBuilder n <> ": " <> displayBuilder (T.pack stderr)
+  displayBuilder (FetchProcessError e) = displayBuilder e
   displayBuilder (FetchParseError msg) =
     "failed to decode just dump: " <> displayBuilder (T.pack msg)
 
 -- | Invoke @just --dump --dump-format json@ and decode the @recipes@ map. Process failures and JSON parse failures are both surfaced as 'FetchError'; no exception escapes.
 fetchDump :: IO (Either FetchError (Map.Map RecipeName Recipe))
 fetchDump = do
-  (exitCode, stdout, stderr) <- readProcessWithExitCode justBin ["--dump", "--dump-format", "json"] ""
-  pure $ case exitCode of
-    ExitFailure n -> Left $ FetchProcessError n stderr
-    ExitSuccess -> bimap FetchParseError (\d -> d.recipes) (eitherDecodeStrict @Dump (TE.encodeUtf8 (T.pack stdout)))
+  result <- runSubprocess "just --dump --dump-format json" justBin ["--dump", "--dump-format", "json"] ""
+  pure $ case result of
+    Left e -> Left (FetchProcessError e)
+    Right stdout -> bimap FetchParseError (\d -> d.recipes) (eitherDecodeStrict @Dump (TE.encodeUtf8 (T.pack stdout)))

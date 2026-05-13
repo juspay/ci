@@ -19,6 +19,7 @@ executable ci
                       CI.Resolve
                       CI.Runner
                       CI.Snapshot
+                      CI.Subprocess
     build-depends:
         , aeson
         , algebraic-graphs
