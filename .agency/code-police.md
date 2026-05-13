@@ -164,6 +164,22 @@ _Anti-patterns_:
 - `f :: Text -> Map Text Foo -> Either Text Bar` where the three `Text`s mean different things.
 - A `String` filepath, URL, ID, or token threaded as a plain `String`. If it has a domain meaning, it has a newtype.
 
+## main-is-thin
+
+`src/Main.hs` is the harness: argv → parse → dispatch → exit. Anything more — orchestration, mode-specific IO, runtime-artifact layout, business records, `staticWhich` binary paths — moves into a `CI.*` module so adding a feature doesn't fatten Main.
+
+_How to apply_:
+
+- Main hosts at most: the `Command` sum, the parser builder, `main`, and (optionally) a tiny `dieOnLeft`-style boundary helper if no other module owns it.
+- Per-mode bodies (e.g. `runLocal`, `runStrict`), data records that describe runtime artifacts (e.g. a `RunDir` carrying path layout), and assembly functions that walk multiple subsystems (e.g. `buildProcessCompose` chaining fetch → entrypoint → reach → lower → toProcessCompose) all live in a `CI.Pipeline`-shaped module, not in Main.
+- Heuristic: if Main exceeds ~70 lines (imports + Command + parser + main + dispatch + one tiny helper), check whether a new function or record snuck in that belongs in `CI.*`.
+
+_Anti-patterns_:
+
+- `runLocal`/`runStrict` (or any per-mode orchestration) defined in Main.
+- `Process*` records, path conventions, command-builders defined in Main.
+- A `RunDir`-shaped record threaded through Main's helpers — should live in the module that owns the convention.
+
 ## code-style
 
 Small style conventions. Each bullet is mechanically checkable.
