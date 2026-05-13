@@ -5,7 +5,7 @@ license:         NONE
 build-type:      Simple
 
 common warnings
-    ghc-options: -Wall
+    ghc-options: -Wall -threaded
 
 executable ci
     import:           warnings
