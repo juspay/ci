@@ -75,7 +75,6 @@ parserInfo =
     (commandParser <**> helper)
     (fullDesc <> progDesc "Drive CI by translating the just recipe graph into process-compose")
 
--- | Bare invocation defaults to @Run []@ via the @\<|\> pure (Run [])@ fallthrough.
 commandParser :: Parser Command
 commandParser =
   subparser
