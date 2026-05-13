@@ -17,16 +17,20 @@ executable ci
                       CI.ProcessCompose
                       CI.RecipeStep
                       CI.Runner
+                      CI.Snapshot
     build-depends:
         , aeson
         , algebraic-graphs
         , base
         , bytestring
         , containers
+        , directory
+        , filepath
         , optparse-applicative
         , process
         , text
         , text-display
+        , time
         , which
         , yaml
     hs-source-dirs:   src
