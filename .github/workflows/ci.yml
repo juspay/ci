@@ -10,9 +10,4 @@ jobs:
     runs-on: x86_64-linux
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          nix develop -c bash -c '
-            set -euo pipefail
-            nix run . > pc.yaml
-            process-compose -f pc.yaml -t=false up
-          '
+      - run: nix run .

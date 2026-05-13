@@ -22,16 +22,16 @@ flake-check:
 ghcid:
     ghcid -T :main
 
-# Run the binary and verify its YAML output declares the `ci` process.
+# Smoke-test the dump-yaml subcommand and verify the `ci` process is declared.
 [linux]
 run-check: build
     echo "Running on Linux $(uname -srm)"
-    nix run . | tee /tmp/ci-out
+    nix run . -- dump-yaml | tee /tmp/ci-out
     grep -qE '^  ci:' /tmp/ci-out
 
-# Run the binary and verify its YAML output declares the `ci` process.
+# Smoke-test the dump-yaml subcommand and verify the `ci` process is declared.
 [macos]
 run-check: build
     echo "Running on macOS $(sw_vers -productVersion)"
-    nix run . | tee "${TMPDIR%/}/ci-out"
+    nix run . -- dump-yaml | tee "${TMPDIR%/}/ci-out"
     grep -qE '^  ci:' "${TMPDIR%/}/ci-out"
