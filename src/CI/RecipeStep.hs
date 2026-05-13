@@ -43,6 +43,11 @@ toRecipeStatus :: ExitCode -> RecipeStatus
 toRecipeStatus ExitSuccess = Succeeded
 toRecipeStatus (ExitFailure _) = Failed
 
+-- | Execute one recipe with lifecycle reporting. @onStatus@ is invoked with
+-- 'Running' before the recipe spawns and with the terminal 'RecipeStatus'
+-- (derived from the exit code) after it finishes. The recipe's own exit
+-- code is returned so the caller (typically @main@'s @run-step@ branch)
+-- can propagate it via 'exitWith'.
 runStep :: (RecipeStatus -> IO ()) -> RecipeName -> IO ExitCode
 runStep onStatus name = do
   onStatus Running
