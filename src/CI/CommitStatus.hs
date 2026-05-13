@@ -12,24 +12,7 @@
 -- 'postStatus' issues a single REST call per transition. Failures are
 -- logged to stderr and swallowed — a flaky API call must not poison the
 -- recipe's own exit code.
-module CI.CommitStatus
-  ( -- * Wire vocabulary
-    CommitStatus (..),
-    toCommitStatus,
-
-    -- * Resolved coordinates
-    RepoCoords (..),
-    Sha (..),
-    Context,
-    mkContext,
-    resolveRepoCoords,
-    resolveSha,
-
-    -- * Posting
-    postStatus,
-    buildPoster,
-  )
-where
+module CI.CommitStatus (buildPoster) where
 
 import CI.Justfile (RecipeName)
 import CI.RecipeStep (RecipeStatus (..))

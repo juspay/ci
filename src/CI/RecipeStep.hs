@@ -19,7 +19,6 @@
 -- process-compose's @/process/states/ws@ stream.
 module CI.RecipeStep
   ( RecipeStatus (..),
-    toRecipeStatus,
     runStep,
   )
 where
