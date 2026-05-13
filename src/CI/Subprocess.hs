@@ -2,10 +2,16 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | A subprocess-with-exit-code helper. Wraps non-zero exits as a structured
--- 'SubprocessError' so every shell-out in the project routes failures
--- through the same type and Display instance, instead of each module
--- repeating @case ec of ExitFailure n -> Left (FooFailed n err)@.
+-- | The exit-code-capture shell-out helper. Wraps
+-- 'System.Process.readProcessWithExitCode' so non-zero exits become a
+-- structured 'SubprocessError' (description + code + captured stderr)
+-- routed through one Display instance, instead of each module repeating
+-- @case ec of ExitFailure n -> Left (FooFailed n err)@.
+--
+-- Scoped narrowly: only this one shell-out pattern. Other
+-- 'System.Process' shapes (fire-and-forget 'callProcess', bracketed
+-- 'withCreateProcess' with custom stdin handling) are not part of this
+-- module's claim — they live in the tool wrapper that needs them.
 module CI.Subprocess
   ( SubprocessError (..),
     runSubprocess,

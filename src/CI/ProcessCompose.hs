@@ -5,9 +5,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
--- | The process-compose wire format, in both directions: the YAML config we
--- emit to drive the pipeline, and the JSON events we decode from its
--- @/process/states/ws@ WebSocket stream.
+-- | Everything tied to the @process-compose@ binary: the YAML config we
+-- emit, the WebSocket events we decode from @/process/states/ws@, the
+-- @up@-invocation argv, and the spawn-and-wait operation itself. The
+-- binary path and argv builder are internal — callers run the pipeline
+-- via 'runPipeline'.
 module CI.ProcessCompose
   ( -- * Output schema (YAML config)
     ProcessCompose (..),
@@ -24,10 +26,9 @@ module CI.ProcessCompose
     ProcessStateEvent (..),
 
     -- * Invocation
-    processComposeBin,
     UpInvocation (..),
     ServerMode (..),
-    toUpArgs,
+    runProcessCompose,
   )
 where
 
@@ -35,14 +36,20 @@ import qualified Algebra.Graph.AdjacencyMap as G
 import CI.Justfile (RecipeName)
 import Data.Aeson (FromJSON (parseJSON), ToJSON (..), camelTo2, defaultOptions, genericToJSON, withText)
 import Data.Aeson.Types (Options (..))
+import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Yaml as Y
 import GHC.Generics (Generic)
+import System.Exit (ExitCode, die)
+import System.IO (hClose)
+import System.Process (CreateProcess (..), StdStream (..), proc, waitForProcess, withCreateProcess)
 import System.Which (staticWhich)
 
 -- | Absolute path to the @process-compose@ binary, baked in at compile time
--- via Nix (see @settings.ci.extraBuildTools@ in @flake.nix@).
+-- via Nix (see @settings.ci.extraBuildTools@ in @flake.nix@). Not exported:
+-- the only spawn site is 'runPipeline' below.
 processComposeBin :: FilePath
 processComposeBin = $(staticWhich "process-compose")
 
@@ -199,11 +206,26 @@ data UpInvocation = UpInvocation
 
 -- | Translate an 'UpInvocation' into the argv vector for @process-compose@.
 -- The YAML config is read from stdin (@-f /dev/stdin@) so it's not part of
--- the args. TUI is disabled (@-t=false@) unconditionally — the runner is
--- the only caller and it never wants TUI.
+-- the args. TUI is disabled (@-t=false@) unconditionally — there is only
+-- one caller ('runPipeline') and it never wants TUI.
 toUpArgs :: UpInvocation -> [String]
 toUpArgs up =
   ["up", "-f", "/dev/stdin", "-t=false", "-L", up.logFile] <> serverArgs up.server <> up.extraArgs
   where
     serverArgs NoServer = ["--no-server"]
     serverArgs (UnixSocket path) = ["-U", "-u", path]
+
+-- | Spawn @process-compose up@ from the 'UpInvocation', encode the
+-- 'ProcessCompose' as YAML on stdin, and forward the subprocess's exit
+-- code. 'withCreateProcess' brackets the spawn so stdin is closed and the
+-- child reaped even if 'BS.hPut' throws (e.g. broken pipe).
+runProcessCompose :: UpInvocation -> ProcessCompose -> IO ExitCode
+runProcessCompose up pc =
+  withCreateProcess cp $ \mhin _ _ ph -> case mhin of
+    Nothing -> die "process-compose: stdin pipe was not created"
+    Just hin -> do
+      BS.hPut hin (Y.encode pc)
+      hClose hin
+      waitForProcess ph
+  where
+    cp = (proc processComposeBin (toUpArgs up)) {std_in = CreatePipe}

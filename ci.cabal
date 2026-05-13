@@ -19,7 +19,6 @@ executable ci
                       CI.Observer
                       CI.Pipeline
                       CI.ProcessCompose
-                      CI.Runner
                       CI.Subprocess
     build-depends:
         , aeson

@@ -3,17 +3,22 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | GitHub commit-status wire format and the @gh@ CLI adapter. 'postStatus'
--- issues a single REST call per transition and logs the attempt to stderr
--- with a @gh:@ prefix so the output is visually distinct from per-recipe
--- stdio. Posting failures are logged and swallowed — a flaky API call
--- must not poison the recipe's own exit code.
+-- | Translate process-compose state events into GitHub commit-status posts.
+-- This module owns CI's policy: the @ci/\<recipe\>@ context-name
+-- convention, the 'ProcessStatus' → 'CommitStatus' mapping, and the
+-- human-readable description per state. The endpoint URL, the wire
+-- encoding of each state, and the form-field names are gh-API details
+-- owned by "CI.Gh".
+--
+-- 'postStatus' issues one POST per transition via 'postCommitStatus' and
+-- logs the attempt to stderr with a @gh:@ prefix so it's distinct from
+-- per-recipe stdio. Posting failures are logged and swallowed — a flaky
+-- API call must not poison the recipe's own exit code.
 module CI.CommitStatus (postConsumer) where
 
-import CI.Gh (Repo (..), ghBin)
-import CI.Git (Sha (..))
+import CI.Gh (CommitStatus (..), CommitStatusPost (..), Repo, postCommitStatus)
+import CI.Git (Sha)
 import CI.ProcessCompose (ProcessState (..), ProcessStatus (..))
-import CI.Subprocess (runSubprocess)
 import qualified CI.Subprocess as Sub
 import Data.Foldable (for_)
 import Data.Text (Text)
@@ -32,55 +37,25 @@ newtype Context = Context Text
 mkContext :: Display a => a -> Context
 mkContext recipe = Context ("ci/" <> display recipe)
 
--- | The four GitHub commit-status states. The observer maps process-compose
--- events to these: @Running@→'Pending', @Completed@+exit0→'Success',
--- @Completed@+exit≠0→'Failure', @Skipped@/@Error@→'Error'.
-data CommitStatus = Pending | Success | Failure | Error
-  deriving stock (Show, Eq)
-
--- | Issue one @gh api POST /repos/{owner}/{repo}/statuses/{sha}@ call and
--- log the attempt to stderr with a @gh:@ prefix. Failures are logged with
--- @FAILED@ and the exit code, never propagated — the recipe's exit code
--- must not depend on whether a status post succeeded.
+-- | Issue one commit-status POST and log the attempt to stderr with a
+-- @gh:@ prefix. Failures are logged with @FAILED@ and the exit code,
+-- never propagated — the recipe's exit code must not depend on whether a
+-- status post succeeded.
 postStatus :: Repo -> Sha -> Context -> CommitStatus -> IO ()
-postStatus repo (Sha sha) (Context ctx) cs = do
-  let endpoint =
-        "/repos/"
-          <> T.unpack repo.owner
-          <> "/"
-          <> T.unpack repo.name
-          <> "/statuses/"
-          <> T.unpack sha
-      args =
-        [ "api",
-          "-X",
-          "POST",
-          endpoint,
-          "-f",
-          "state=" <> T.unpack (wireState cs),
-          "-f",
-          "context=" <> T.unpack ctx,
-          "-f",
-          "description=" <> T.unpack (wireDescription cs)
-        ]
-  result <- runSubprocess ("gh api statuses " <> wireState cs) ghBin args ""
-  let line = "gh: " <> T.unpack ctx <> " " <> T.unpack (wireState cs)
+postStatus repo sha (Context ctx) cs = do
+  result <- postCommitStatus repo sha CommitStatusPost {state = cs, context = ctx, description = describe cs}
+  let line = "gh: " <> T.unpack ctx <> " " <> T.unpack (display cs)
   case result of
-    Right _ -> hPutStrLn stderr line
+    Right () -> hPutStrLn stderr line
     Left e ->
       hPutStrLn stderr $ line <> " FAILED (" <> show e.code <> "): " <> Sub.stderr e
 
-wireState :: CommitStatus -> Text
-wireState Pending = "pending"
-wireState Success = "success"
-wireState Failure = "failure"
-wireState Error = "error"
-
-wireDescription :: CommitStatus -> Text
-wireDescription Pending = "Running"
-wireDescription Success = "Succeeded"
-wireDescription Failure = "Failed"
-wireDescription Error = "Errored"
+-- | CI's human-readable label per state; sent as the @description@ field.
+describe :: CommitStatus -> Text
+describe Pending = "Running"
+describe Success = "Succeeded"
+describe Failure = "Failed"
+describe Error = "Errored"
 
 -- | An observer consumer (see "CI.Observer") that translates each
 -- 'ProcessState' into at most one 'postStatus' call under the

@@ -19,12 +19,10 @@ import CI.Entrypoint (findEntrypoint)
 import CI.Gh (viewRepo)
 import CI.Git (ensureCleanTree, resolveSha, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
-import CI.Justfile (RecipeName, fetchDump, justBin)
+import CI.Justfile (fetchDump, recipeCommand)
 import CI.Observer (runObserver)
-import CI.ProcessCompose (ProcessCompose, ServerMode (..), UpInvocation (..), toProcessCompose)
-import CI.Runner (runPipeline)
+import CI.ProcessCompose (ProcessCompose, ServerMode (..), UpInvocation (..), runProcessCompose, toProcessCompose)
 import Control.Concurrent.Async (link, waitCatch, withAsync)
-import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
@@ -57,7 +55,7 @@ ensureRunDir = do
 runLocal :: RunDir -> [String] -> IO ()
 runLocal dirs extra = do
   pc <- buildProcessCompose Nothing
-  runPipeline (UpInvocation NoServer dirs.pcLog extra) pc >>= exitWith
+  runProcessCompose (UpInvocation NoServer dirs.pcLog extra) pc >>= exitWith
 
 -- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
 -- via @git worktree@ at @.ci\/snap@ → start process-compose with its API
@@ -78,7 +76,7 @@ runStrict dirs extra = do
       -- WS closes on its own shutdown, so this is bounded by the close
       -- handshake.
       link obs
-      ec <- runPipeline (UpInvocation (UnixSocket dirs.sock) dirs.pcLog extra) pc
+      ec <- runProcessCompose (UpInvocation (UnixSocket dirs.sock) dirs.pcLog extra) pc
       obsResult <- waitCatch obs
       case obsResult of
         Right () -> pure ()
@@ -96,12 +94,6 @@ buildProcessCompose workingDir = do
   reachable <- dieOnLeft $ reachableSubgraph root recipes
   graph <- dieOnLeft $ lowerToRunnerGraph reachable
   pure $ toProcessCompose workingDir recipeCommand graph
-
--- | Per-vertex shell command: @\<absolute-just-path\> --no-deps \<recipe\>@.
--- Absolute path baked in so process-compose's spawned shell finds @just@
--- regardless of PATH.
-recipeCommand :: RecipeName -> Text
-recipeCommand n = T.pack justBin <> " --no-deps " <> display n
 
 -- | Die at the boundary with the structured error's Display rendering.
 dieOnLeft :: Display e => Either e a -> IO a

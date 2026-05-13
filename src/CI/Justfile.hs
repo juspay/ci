@@ -19,10 +19,10 @@ module CI.Justfile
     Attribute (..),
     Os (..),
 
-    -- * Fetching
+    -- * Operations
     FetchError (..),
     fetchDump,
-    justBin,
+    recipeCommand,
   )
 where
 
@@ -41,8 +41,17 @@ import GHC.Generics (Generic)
 import System.Which (staticWhich)
 
 -- | Absolute path to the @just@ binary, baked in at compile time via Nix.
+-- Not exported: every just shell-out in the project goes through one of
+-- the typed operations below.
 justBin :: FilePath
 justBin = $(staticWhich "just")
+
+-- | The shell command process-compose runs per recipe: the absolute
+-- @just@ path with @--no-deps@ (process-compose itself owns scheduling,
+-- so just must not re-resolve dependencies) and the recipe name. Absolute
+-- path so process-compose's spawned shell finds @just@ regardless of PATH.
+recipeCommand :: RecipeName -> Text
+recipeCommand (RecipeName n) = T.pack justBin <> " --no-deps " <> n
 
 -- | The identifier of a recipe, as it appears in a justfile and as a key in @just --dump@'s @recipes@ map.
 newtype RecipeName = RecipeName Text
