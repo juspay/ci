@@ -10,11 +10,11 @@ module CI.Gh
     ghBin,
 
     -- * Values
-    RepoCoords (..),
+    Repo (..),
 
     -- * Operations
     GhError (..),
-    resolveRepoCoords,
+    viewRepo,
   )
 where
 
@@ -28,10 +28,11 @@ import System.Which (staticWhich)
 ghBin :: FilePath
 ghBin = $(staticWhich "gh")
 
--- | The two halves of a GitHub repository identifier, as in
--- @\<owner\>/\<repo\>@. Resolved once from @gh repo view@ and threaded into
--- 'CI.CommitStatus.postStatus' alongside the 'CI.Git.Sha'.
-data RepoCoords = RepoCoords {owner :: Text, repo :: Text}
+-- | A GitHub repository, matching @gh@'s vocabulary: an owner login plus a
+-- repository name — the two halves of @nameWithOwner@. Resolved once from
+-- @gh repo view@ and threaded into 'CI.CommitStatus.postConsumer'
+-- alongside the 'CI.Git.Sha'.
+data Repo = Repo {owner :: Text, name :: Text}
   deriving stock (Show, Eq)
 
 -- | Failures from the gh operations in this module.
@@ -45,11 +46,10 @@ instance Display GhError where
   displayBuilder (UnexpectedNameWithOwner out) =
     "unexpected nameWithOwner from gh: " <> displayBuilder (T.pack out)
 
--- | Resolve the @\<owner\>/\<repo\>@ this checkout reports to via
--- @gh repo view --json nameWithOwner@. Falls out as 'RepoCoords' so callers
--- never see a slash-separated string.
-resolveRepoCoords :: IO (Either GhError RepoCoords)
-resolveRepoCoords = do
+-- | Run @gh repo view --json nameWithOwner@ and split the result into a
+-- typed 'Repo' so callers never see a slash-separated string.
+viewRepo :: IO (Either GhError Repo)
+viewRepo = do
   result <-
     runSubprocess
       "gh repo view"
@@ -59,5 +59,5 @@ resolveRepoCoords = do
   pure $ case result of
     Left e -> Left (GhSubprocess e)
     Right out -> case T.splitOn "/" (T.strip (T.pack out)) of
-      [o, r] | not (T.null o), not (T.null r) -> Right (RepoCoords o r)
+      [o, n] | not (T.null o), not (T.null n) -> Right (Repo o n)
       _ -> Left (UnexpectedNameWithOwner out)

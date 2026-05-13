@@ -10,7 +10,7 @@
 -- must not poison the recipe's own exit code.
 module CI.CommitStatus (postConsumer) where
 
-import CI.Gh (RepoCoords (..), ghBin)
+import CI.Gh (Repo (..), ghBin)
 import CI.Git (Sha (..))
 import CI.ProcessCompose (ProcessState (..), ProcessStatus (..))
 import CI.Subprocess (runSubprocess)
@@ -42,13 +42,13 @@ data CommitStatus = Pending | Success | Failure | Error
 -- log the attempt to stderr with a @gh:@ prefix. Failures are logged with
 -- @FAILED@ and the exit code, never propagated — the recipe's exit code
 -- must not depend on whether a status post succeeded.
-postStatus :: RepoCoords -> Sha -> Context -> CommitStatus -> IO ()
-postStatus coords (Sha sha) (Context ctx) cs = do
+postStatus :: Repo -> Sha -> Context -> CommitStatus -> IO ()
+postStatus repo (Sha sha) (Context ctx) cs = do
   let endpoint =
         "/repos/"
-          <> T.unpack coords.owner
+          <> T.unpack repo.owner
           <> "/"
-          <> T.unpack coords.repo
+          <> T.unpack repo.name
           <> "/statuses/"
           <> T.unpack sha
       args =
@@ -86,9 +86,9 @@ wireDescription Error = "Errored"
 -- 'ProcessState' into at most one 'postStatus' call under the
 -- @ci/\<recipe\>@ context. Non-terminal states ('PsOther') drop on the
 -- floor.
-postConsumer :: RepoCoords -> Sha -> ProcessState -> IO ()
-postConsumer coords sha ps =
-  for_ (psToCommitStatus ps) (postStatus coords sha (mkContext ps.name))
+postConsumer :: Repo -> Sha -> ProcessState -> IO ()
+postConsumer repo sha ps =
+  for_ (psToCommitStatus ps) (postStatus repo sha (mkContext ps.name))
 
 psToCommitStatus :: ProcessState -> Maybe CommitStatus
 psToCommitStatus ps = case (ps.status, ps.exit_code) of

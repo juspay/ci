@@ -16,7 +16,7 @@ where
 
 import CI.CommitStatus (postConsumer)
 import CI.Entrypoint (findEntrypoint)
-import CI.Gh (resolveRepoCoords)
+import CI.Gh (viewRepo)
 import CI.Git (ensureCleanTree, resolveSha, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (RecipeName, fetchDump, justBin)
@@ -59,18 +59,18 @@ runLocal dirs extra = do
   pc <- buildProcessCompose Nothing
   runPipeline (UpInvocation NoServer dirs.pcLog extra) pc >>= exitWith
 
--- | Strict mode: clean-tree refuse → resolve coords + SHA → snapshot HEAD
+-- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
 -- via @git worktree@ at @.ci\/snap@ → start process-compose with its API
 -- on @.ci\/pc.sock@ → subscribe to state events and post commit statuses
 -- concurrently with the pipeline run.
 runStrict :: RunDir -> [String] -> IO ()
 runStrict dirs extra = do
   dieOnLeft =<< ensureCleanTree
-  coords <- dieOnLeft =<< resolveRepoCoords
+  repo <- dieOnLeft =<< viewRepo
   sha <- dieOnLeft =<< resolveSha
   withSnapshotWorktree dirs.snap $ do
     pc <- buildProcessCompose (Just dirs.snap)
-    withAsync (runObserver dirs.sock [postConsumer coords sha]) $ \obs -> do
+    withAsync (runObserver dirs.sock [postConsumer repo sha]) $ \obs -> do
       -- 'link' propagates an observer crash to this thread (so an
       -- observer-side exception aborts the pipeline rather than silently
       -- proceeding with no status posts). 'waitCatch' after the pipeline
