@@ -157,9 +157,5 @@ buildPoster name = do
   if not enabled
     then pure (Right (\_ -> pure ()))
     else do
-      coordsE <- resolveRepoCoords
-      shaE <- resolveSha
-      pure $ do
-        coords <- coordsE
-        sha <- shaE
-        Right (postStatus coords sha (mkContext name) . toCommitStatus)
+      let mkHandler coords sha = postStatus coords sha (mkContext name) . toCommitStatus
+      liftA2 mkHandler <$> resolveRepoCoords <*> resolveSha
