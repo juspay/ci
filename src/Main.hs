@@ -22,8 +22,8 @@ import CI.Entrypoint (findEntrypoint)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (RecipeName, fetchDump, justBin)
 import CI.Observer (runObserver)
-import CI.ProcessCompose (ProcessCompose, toProcessCompose)
-import CI.Runner (ServerMode (..), runPipeline)
+import CI.ProcessCompose (ProcessCompose, ServerMode (..), UpInvocation (..), toProcessCompose)
+import CI.Runner (runPipeline)
 import CI.Git (withSnapshotWorktree)
 import Control.Applicative (many, (<|>))
 import Control.Concurrent.Async (link, waitCatch, withAsync)
@@ -53,7 +53,7 @@ import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
 
 data Command
-  = Run [String]
+  = Run [String] -- ^ extra args to forward to @process-compose up@
   | DumpYaml
 
 -- | The four artifact paths under @\$PWD\/.ci\/@. Built once at the top of
@@ -69,12 +69,12 @@ main :: IO ()
 main = do
   cmd <- execParser parserInfo
   case cmd of
-    Run extraArgs -> do
+    Run extra -> do
       dirs <- ensureRunDir
       strict <- (== Just "true") <$> lookupEnv "CI"
       if strict
-        then runStrict dirs extraArgs
-        else runLocal dirs extraArgs
+        then runStrict dirs extra
+        else runLocal dirs extra
     DumpYaml -> do
       pc <- buildProcessCompose Nothing
       BS.putStr (Y.encode pc)
@@ -93,16 +93,16 @@ ensureRunDir = do
 -- process-compose log goes to @.ci\/pc.log@ so even local runs don't leak
 -- into @\$TMPDIR@.
 runLocal :: RunDir -> [String] -> IO ()
-runLocal dirs extraArgs = do
+runLocal dirs extra = do
   pc <- buildProcessCompose Nothing
-  runPipeline NoServer dirs.pcLog extraArgs pc >>= exitWith
+  runPipeline (UpInvocation NoServer dirs.pcLog extra) pc >>= exitWith
 
 -- | Strict mode: clean-tree refuse → resolve coords + SHA → snapshot HEAD
 -- via @git worktree@ at @.ci\/snap@ → start process-compose with its API
 -- on @.ci\/pc.sock@ → subscribe to state events and post commit statuses
 -- concurrently with the pipeline run.
 runStrict :: RunDir -> [String] -> IO ()
-runStrict dirs extraArgs = do
+runStrict dirs extra = do
   dieOnLeft =<< ensureCleanTree
   coords <- dieOnLeft =<< resolveRepoCoords
   sha <- dieOnLeft =<< resolveSha
@@ -116,7 +116,7 @@ runStrict dirs extraArgs = do
       -- WS closes on its own shutdown, so this is bounded by the close
       -- handshake.
       link obs
-      ec <- runPipeline (UnixSocket dirs.sock) dirs.pcLog extraArgs pc
+      ec <- runPipeline (UpInvocation (UnixSocket dirs.sock) dirs.pcLog extra) pc
       obsResult <- waitCatch obs
       case obsResult of
         Right () -> pure ()

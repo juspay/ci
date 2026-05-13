@@ -23,8 +23,11 @@ module CI.ProcessCompose
     ProcessStatus (..),
     ProcessStateEvent (..),
 
-    -- * Binary
+    -- * Invocation
     processComposeBin,
+    UpInvocation (..),
+    ServerMode (..),
+    toUpArgs,
   )
 where
 
@@ -173,3 +176,34 @@ data ProcessState = ProcessState
 newtype ProcessStateEvent = ProcessStateEvent {state :: ProcessState}
   deriving stock (Show, Generic)
   deriving anyclass (FromJSON)
+
+-- | Selects how process-compose's HTTP API surface is exposed (or not).
+-- 'NoServer' suppresses the API entirely — used for local-mode dev runs
+-- where nothing observes the state. 'UnixSocket' binds the API to a UDS at
+-- the given path — used in strict mode where 'CI.Observer' subscribes to
+-- the state-event stream over that socket.
+data ServerMode
+  = NoServer
+  | UnixSocket FilePath
+
+-- | All inputs that shape a @process-compose up@ invocation. The YAML
+-- config itself goes on stdin separately (it's typically too big for an
+-- argv); everything else flag-shaped lives here.
+data UpInvocation = UpInvocation
+  { server :: ServerMode,
+    logFile :: FilePath,
+    -- | Caller-supplied extra args appended verbatim after the canned
+    -- baseline; used for @--log-level debug@ and similar overrides.
+    extraArgs :: [String]
+  }
+
+-- | Translate an 'UpInvocation' into the argv vector for @process-compose@.
+-- The YAML config is read from stdin (@-f /dev/stdin@) so it's not part of
+-- the args. TUI is disabled (@-t=false@) unconditionally — the runner is
+-- the only caller and it never wants TUI.
+toUpArgs :: UpInvocation -> [String]
+toUpArgs up =
+  ["up", "-f", "/dev/stdin", "-t=false", "-L", up.logFile] <> serverArgs up.server <> up.extraArgs
+  where
+    serverArgs NoServer = ["--no-server"]
+    serverArgs (UnixSocket path) = ["-U", "-u", path]
