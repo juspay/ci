@@ -1,5 +1,3 @@
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -16,7 +14,7 @@
 -- API call must not poison the recipe's own exit code.
 module CI.CommitStatus (postConsumer) where
 
-import CI.Gh (CommitStatus (..), CommitStatusPost (..), Repo, postCommitStatus)
+import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context (..), Repo, postCommitStatus)
 import CI.Git (Sha)
 import CI.ProcessCompose (ProcessState (..), ProcessStatus (..))
 import qualified CI.Subprocess as Sub
@@ -26,14 +24,8 @@ import qualified Data.Text as T
 import Data.Text.Display (Display, display)
 import System.IO (hPutStrLn, stderr)
 
--- | A GitHub status-check context (the unique label that groups posts of the
--- same check, shown on the PR's checks panel). Construct via 'mkContext';
--- the constructor is intentionally hidden so the @ci/\<recipe\>@ naming
--- convention lives in one place.
-newtype Context = Context Text
-  deriving newtype (Show)
-
 -- | The single source of truth for status-check context names: @ci/\<recipe\>@.
+-- Wraps 'Context' so the prefix lives in exactly one place.
 mkContext :: Display a => a -> Context
 mkContext recipe = Context ("ci/" <> display recipe)
 
@@ -42,9 +34,9 @@ mkContext recipe = Context ("ci/" <> display recipe)
 -- never propagated — the recipe's exit code must not depend on whether a
 -- status post succeeded.
 postStatus :: Repo -> Sha -> Context -> CommitStatus -> IO ()
-postStatus repo sha (Context ctx) cs = do
+postStatus repo sha ctx cs = do
   result <- postCommitStatus repo sha CommitStatusPost {state = cs, context = ctx, description = describe cs}
-  let line = "gh: " <> T.unpack ctx <> " " <> T.unpack (display cs)
+  let line = "gh: " <> T.unpack (display ctx) <> " " <> T.unpack (display cs)
   case result of
     Right () -> hPutStrLn stderr line
     Left e ->

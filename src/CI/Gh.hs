@@ -1,4 +1,5 @@
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
@@ -12,6 +13,7 @@ module CI.Gh
   ( -- * Values
     Repo (..),
     CommitStatus (..),
+    Context (..),
     CommitStatusPost (..),
 
     -- * Operations
@@ -80,12 +82,19 @@ instance Display CommitStatus where
   displayBuilder Failure = "failure"
   displayBuilder Error = "error"
 
+-- | A status-check context: the unique label that groups posts of the same
+-- check on a PR. GitHub treats this as opaque; the @ci/\<recipe\>@ naming
+-- convention is CI policy, owned by "CI.CommitStatus".
+newtype Context = Context Text
+  deriving stock (Show)
+  deriving newtype (Display)
+
 -- | The fields the @Create-a-commit-status@ endpoint expects, grouped so
--- callers don't pass three positional 'Text's. @description@ is free-form
+-- callers don't pass three positional values. @description@ is free-form
 -- caller-supplied prose.
 data CommitStatusPost = CommitStatusPost
   { state :: CommitStatus,
-    context :: Text,
+    context :: Context,
     description :: Text
   }
 
@@ -103,7 +112,7 @@ postCommitStatus repo (Sha sha) post = do
           "-f",
           "state=" <> T.unpack (display post.state),
           "-f",
-          "context=" <> T.unpack post.context,
+          "context=" <> T.unpack (display post.context),
           "-f",
           "description=" <> T.unpack post.description
         ]
