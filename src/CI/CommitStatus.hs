@@ -39,7 +39,7 @@ newtype Context = Context Text
 
 -- | The single source of truth for status-check context names: @ci/\<recipe\>@.
 mkContext :: Display a => a -> Context
-mkContext name = Context ("ci/" <> display name)
+mkContext recipe = Context ("ci/" <> display recipe)
 
 -- | The four GitHub commit-status states. The observer maps process-compose
 -- events to these: @Running@→'Pending', @Completed@+exit0→'Success',
@@ -97,10 +97,10 @@ wireDescription Error = "Errored"
 -- floor.
 postConsumer :: RepoCoords -> Sha -> ProcessState -> IO ()
 postConsumer coords sha ps =
-  for_ (psToCommitStatus ps) (postStatus coords sha (mkContext (name ps)))
+  for_ (psToCommitStatus ps) (postStatus coords sha (mkContext ps.name))
 
 psToCommitStatus :: ProcessState -> Maybe CommitStatus
-psToCommitStatus ps = case (status ps, exit_code ps) of
+psToCommitStatus ps = case (ps.status, ps.exit_code) of
   (PsRunning, _) -> Just Pending
   (PsCompleted, 0) -> Just Success
   (PsCompleted, _) -> Just Failure
