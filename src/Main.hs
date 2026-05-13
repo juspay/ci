@@ -15,13 +15,13 @@ import CI.Entrypoint (findEntrypoint)
 import CI.CommitStatus (Context (..), postStatus, resolveRepoCoords, resolveSha, toCommitStatus)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (RecipeName, fetchDump)
-import CI.ProcessCompose (Process (..), ProcessCompose (..), toProcessCompose)
+import CI.ProcessCompose (ProcessCompose, toProcessCompose)
 import CI.RecipeStep (RecipeStatus, runStep)
 import CI.Runner (runPipeline)
 import Control.Applicative (many, (<|>))
 import qualified Data.ByteString as BS
-import qualified Data.Map.Strict as Map
 import Data.String (fromString)
+import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
 import qualified Data.Yaml as Y
@@ -52,14 +52,22 @@ main = do
   cmd <- execParser parserInfo
   case cmd of
     Run extraArgs -> do
-      pc <- buildWrappedProcessCompose
+      pc <- buildProcessCompose =<< runStepCommand
       runPipeline extraArgs pc >>= exitWith
     DumpYaml -> do
-      pc <- buildWrappedProcessCompose
+      pc <- buildProcessCompose =<< runStepCommand
       BS.putStr (Y.encode pc)
     RunStep name -> do
       poster <- buildPoster name
       runStep poster name >>= exitWith
+
+-- | Produce the per-recipe shell command process-compose runs: @\<self\>
+-- run-step \<name\>@. Absolute self-path is baked in because process-compose
+-- spawns commands through a shell whose PATH may not contain this binary.
+runStepCommand :: IO (RecipeName -> Text)
+runStepCommand = do
+  self <- T.pack <$> getExecutablePath
+  pure $ \name -> self <> " run-step " <> display name
 
 parserInfo :: ParserInfo Command
 parserInfo =
@@ -77,28 +85,13 @@ commandParser =
     )
     <|> pure (Run [])
 
-buildWrappedProcessCompose :: IO ProcessCompose
-buildWrappedProcessCompose = do
-  self <- getExecutablePath
-  wrapForCI self <$> buildProcessCompose
-
-buildProcessCompose :: IO ProcessCompose
-buildProcessCompose = do
+buildProcessCompose :: (RecipeName -> Text) -> IO ProcessCompose
+buildProcessCompose mkCommand = do
   recipes <- dieOnLeft =<< fetchDump
   root <- dieOnLeft $ findEntrypoint recipes
   reachable <- dieOnLeft $ reachableSubgraph root recipes
   graph <- dieOnLeft $ lowerToRunnerGraph reachable
-  pure $ toProcessCompose graph
-
--- | Rewrite every process's @command@ to invoke @\<self\> run-step \<name\>@
--- so the lifecycle wrapper runs for every vertex. Absolute self-path is
--- baked in because process-compose spawns commands through a shell whose
--- PATH may not contain this binary.
-wrapForCI :: FilePath -> ProcessCompose -> ProcessCompose
-wrapForCI self (ProcessCompose ps) =
-  ProcessCompose (Map.mapWithKey rewrap ps)
-  where
-    rewrap name p = p {command = T.pack self <> " run-step " <> display name}
+  pure $ toProcessCompose mkCommand graph
 
 -- | Construct the lifecycle poster for a given recipe. When @CI=true@,
 -- resolve repo/SHA once and return a 'postStatus' closure under the

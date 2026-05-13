@@ -25,7 +25,6 @@ import Data.Aeson (ToJSON (..), camelTo2, defaultOptions, genericToJSON)
 import Data.Aeson.Types (Options (..))
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
-import Data.Text.Display (display)
 import GHC.Generics (Generic)
 
 -- | Aeson 'Options' that translate @CamelCase@ constructor tags into
@@ -92,15 +91,18 @@ instance ToJSON RestartPolicy where
   toJSON = genericToJSON snakeCaseTag
 
 -- | Assemble a @process-compose@ config from a pre-validated execution graph.
--- Each vertex becomes a process invoking @just --no-deps <name>@; each
--- outgoing edge becomes a @depends_on@ entry.
-toProcessCompose :: G.AdjacencyMap RecipeName -> ProcessCompose
-toProcessCompose g =
+-- The caller supplies @mkCommand@, the shell command emitted for each
+-- vertex; each outgoing edge becomes a @depends_on@ entry. Keeping command
+-- construction out of this module lets callers vary how vertices are
+-- invoked (bare @just@, a lifecycle wrapper, …) without the YAML emitter
+-- knowing about any of those policies.
+toProcessCompose :: (RecipeName -> Text) -> G.AdjacencyMap RecipeName -> ProcessCompose
+toProcessCompose mkCommand g =
   ProcessCompose $ Map.fromSet mkProcess (G.vertexSet g)
   where
     mkProcess name =
       Process
-        { command = "just --no-deps " <> display name,
+        { command = mkCommand name,
           depends_on = Map.fromSet (const (Dependency ProcessCompletedSuccessfully)) (G.postSet name g),
           availability = Availability {restart = ExitOnFailure, exit_on_skipped = True}
         }
