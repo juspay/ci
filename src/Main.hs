@@ -50,6 +50,7 @@ import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.Environment (lookupEnv)
 import System.Exit (die, exitWith)
 import System.FilePath ((</>))
+import System.IO (hPutStrLn, stderr)
 
 data Command
   = Run [String]
@@ -116,7 +117,10 @@ runStrict dirs extraArgs = do
       -- handshake.
       link obs
       ec <- runPipeline (UnixSocket dirs.sock) dirs.pcLog extraArgs pc
-      _ <- waitCatch obs
+      obsResult <- waitCatch obs
+      case obsResult of
+        Right () -> pure ()
+        Left e -> hPutStrLn stderr $ "observer: exited with error: " <> show e
       exitWith ec
 
 parserInfo :: ParserInfo Command
