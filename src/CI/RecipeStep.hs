@@ -28,9 +28,8 @@ import Data.Text.Display (display)
 import System.Exit (ExitCode (..))
 import System.Process (proc, waitForProcess, withCreateProcess)
 
--- | The three observable states of a recipe execution. The lifecycle does not
--- model an out-of-band "error" (infra failure) — that vocabulary belongs to
--- the reporter layer if anywhere.
+-- | The lifecycle does not model an out-of-band "error" (infra failure) —
+-- that vocabulary belongs to the reporter layer if anywhere.
 data RecipeStatus = Running | Succeeded | Failed
   deriving stock (Show, Eq)
 

@@ -30,9 +30,8 @@ import System.IO (hPutStrLn, stderr)
 import System.Process (readProcessWithExitCode)
 import System.Which (staticWhich)
 
--- | The four GitHub commit-status states. 'Error' is reserved for the wire
--- format's out-of-band-failure slot; the recipe lifecycle never produces it
--- (see 'toCommitStatus').
+-- | 'Error' is reserved for the wire format's out-of-band-failure slot; the
+-- recipe lifecycle never produces it (see 'toCommitStatus').
 data CommitStatus = Pending | Success | Failure | Error
   deriving stock (Show, Eq)
 
