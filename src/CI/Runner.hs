@@ -38,11 +38,11 @@ data ServerMode
 -- subprocess so the stdin handle is closed and the child reaped even if
 -- 'BS.hPut' throws (e.g. broken pipe).
 --
--- @extraArgs@ are appended verbatim after the server-mode flags, so callers
--- can override or extend process-compose's behavior (e.g. @--log-level
--- debug@) without this module knowing the flag surface.
-runPipeline :: ServerMode -> [String] -> ProcessCompose -> IO ExitCode
-runPipeline mode extraArgs pc =
+-- @logPath@ overrides process-compose's default @$TMPDIR@-rooted log file so
+-- every runtime artifact lives under the caller's chosen directory.
+-- @extraArgs@ are appended verbatim after the server-mode flags.
+runPipeline :: ServerMode -> FilePath -> [String] -> ProcessCompose -> IO ExitCode
+runPipeline mode logPath extraArgs pc =
   withCreateProcess cp $ \mhin _ _ ph -> case mhin of
     Nothing -> die "process-compose: stdin pipe was not created"
     Just hin -> do
@@ -54,7 +54,7 @@ runPipeline mode extraArgs pc =
       (proc processComposeBin (baseArgs <> serverArgs <> extraArgs))
         { std_in = CreatePipe
         }
-    baseArgs = ["up", "-f", "/dev/stdin", "-t=false"]
+    baseArgs = ["up", "-f", "/dev/stdin", "-t=false", "-L", logPath]
     serverArgs = case mode of
       NoServer -> ["--no-server"]
       UnixSocket path -> ["-U", "-u", path]

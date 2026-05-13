@@ -55,7 +55,7 @@ import Options.Applicative
     (<**>),
   )
 import qualified Options.Applicative as O (command)
-import System.Directory (getCurrentDirectory)
+import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.Environment (lookupEnv)
 import System.Exit (die, exitWith)
 import System.FilePath ((</>))
@@ -69,36 +69,50 @@ main = do
   cmd <- execParser parserInfo
   case cmd of
     Run extraArgs -> do
+      runDir <- ensureRunDir
       strict <- (== Just "true") <$> lookupEnv "CI"
       if strict
-        then runStrict extraArgs
-        else runLocal extraArgs
+        then runStrict runDir extraArgs
+        else runLocal runDir extraArgs
     DumpYaml -> do
       pc <- buildProcessCompose Nothing
       BS.putStr (Y.encode pc)
 
--- | Local mode: live working tree, no observer, no status posts. Behavior
--- is byte-identical to invoking @process-compose up@ on the dumped YAML.
-runLocal :: [String] -> IO ()
-runLocal extraArgs = do
+-- | Per-repo runtime-artifact directory. Everything we write — the
+-- process-compose UDS, its log file, the @git worktree@ snapshot — lives
+-- here so the user gitignores @\/.ci\/@ once and forgets about it.
+ensureRunDir :: IO FilePath
+ensureRunDir = do
+  cwd <- getCurrentDirectory
+  let dir = cwd </> ".ci"
+  createDirectoryIfMissing True dir
+  pure dir
+
+-- | Local mode: live working tree, no observer, no status posts. The
+-- process-compose log is redirected to @.ci\/pc.log@ so even local runs
+-- don't leak into @\$TMPDIR@.
+runLocal :: FilePath -> [String] -> IO ()
+runLocal runDir extraArgs = do
   pc <- buildProcessCompose Nothing
-  runPipeline NoServer extraArgs pc >>= exitWith
+  runPipeline NoServer (runDir </> "pc.log") extraArgs pc >>= exitWith
 
 -- | Strict mode: clean-tree refuse → resolve coords + SHA → snapshot HEAD
--- via @git worktree@ → start process-compose with its API on a UDS →
--- subscribe to state events and post commit statuses concurrently with the
--- pipeline run.
-runStrict :: [String] -> IO ()
-runStrict extraArgs = do
+-- via @git worktree@ at @.ci\/snap@ → start process-compose with its API
+-- on @.ci\/pc.sock@ → subscribe to state events and post commit statuses
+-- concurrently with the pipeline run.
+runStrict :: FilePath -> [String] -> IO ()
+runStrict runDir extraArgs = do
   dieOnLeft =<< ensureCleanTree
   coords <- dieOnLeft =<< resolveRepoCoords
   sha <- dieOnLeft =<< resolveSha
-  withSnapshotWorktree $ \snap -> do
-    sockPath <- pickSocketPath
-    pc <- buildProcessCompose (Just snap)
+  let snapPath = runDir </> "snap"
+      sockPath = runDir </> "pc.sock"
+      logPath = runDir </> "pc.log"
+  withSnapshotWorktree snapPath $ do
+    pc <- buildProcessCompose (Just snapPath)
     withAsync (runObserver sockPath [postConsumer coords sha]) $ \obs -> do
       link obs
-      ec <- runPipeline (UnixSocket sockPath) extraArgs pc
+      ec <- runPipeline (UnixSocket sockPath) logPath extraArgs pc
       -- Wait for the observer to drain remaining events (the WS closes when
       -- process-compose exits, so this is bounded by the close handshake).
       _ <- waitCatch obs
@@ -119,16 +133,6 @@ psToCommitStatus ps = case (status ps, exit_code ps) of
   ("Skipped", _) -> Just Error
   ("Error", _) -> Just Error
   _ -> Nothing
-
--- | Path for the process-compose API UDS: @\<cwd\>/.ci-pc.sock@. Per-repo
--- (not per-run) by design — process-compose refuses to start if the
--- socket is live, which is exactly the "no concurrent CI runs in the same
--- repo" semantics we want. Stale socket files (process-compose died
--- without cleanup) are removed by process-compose itself on startup.
-pickSocketPath :: IO FilePath
-pickSocketPath = do
-  cwd <- getCurrentDirectory
-  pure $ cwd </> ".ci-pc.sock"
 
 parserInfo :: ParserInfo Command
 parserInfo =

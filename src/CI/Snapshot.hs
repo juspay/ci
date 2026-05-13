@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 -- | Bracketed @git worktree@ snapshot of HEAD. Strict-mode CI runs the
@@ -12,27 +13,23 @@
 -- ('withSnapshotWorktree') is the seam.
 module CI.Snapshot (withSnapshotWorktree) where
 
-import Control.Exception (bracket_)
-import Data.Time.Clock.POSIX (getPOSIXTime)
-import System.Directory (getTemporaryDirectory)
-import System.FilePath ((</>))
+import Control.Exception (SomeException, bracket_, try)
 import System.Process (callProcess)
 import System.Which (staticWhich)
 
 gitBin :: FilePath
 gitBin = $(staticWhich "git")
 
--- | Create a transient @git worktree@ at HEAD, run the action with the
--- snapshot path, and remove the worktree on any exit path (success,
--- failure, or exception, including 'exitWith'). The path lives under
--- @\$TMPDIR@ and is suffixed with the current microsecond timestamp so
--- concurrent runs don't collide.
-withSnapshotWorktree :: (FilePath -> IO a) -> IO a
-withSnapshotWorktree action = do
-  tmpBase <- getTemporaryDirectory
-  now <- getPOSIXTime
-  let snap = tmpBase </> ("ci-snap-" <> show (round (now * 1e6) :: Integer))
+-- | Create a @git worktree@ at HEAD pinned at @snap@, run the action, and
+-- remove the worktree on any exit path (success, failure, or exception,
+-- including 'exitWith'). If a previous run crashed and left a stale worktree
+-- at @snap@, a best-effort @git worktree remove --force@ is attempted before
+-- creation so the next run isn't blocked.
+withSnapshotWorktree :: FilePath -> IO a -> IO a
+withSnapshotWorktree snap action = do
+  _ :: Either SomeException () <-
+    try (callProcess gitBin ["worktree", "remove", "--force", snap])
   bracket_
     (callProcess gitBin ["worktree", "add", "--detach", snap, "HEAD"])
     (callProcess gitBin ["worktree", "remove", "--force", snap])
-    (action snap)
+    action
