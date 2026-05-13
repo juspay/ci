@@ -12,13 +12,13 @@ executable ci
     main-is:          Main.hs
     other-modules:    CI.CommitStatus
                       CI.Entrypoint
+                      CI.Git
                       CI.Graph
                       CI.Justfile
                       CI.Observer
                       CI.ProcessCompose
                       CI.Resolve
                       CI.Runner
-                      CI.Snapshot
                       CI.Subprocess
     build-depends:
         , aeson

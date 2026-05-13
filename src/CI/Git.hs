@@ -1,12 +1,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
--- | Bracketed @git worktree@ snapshot of HEAD. Strict-mode CI runs the
--- whole pipeline inside this worktree so that (a) edits to the original
--- working tree mid-pipeline can't leak into later recipes, and (b)
--- @git rev-parse HEAD@ from inside any recipe always returns the same
--- pinned SHA — the one the user committed to test.
-module CI.Snapshot (withSnapshotWorktree) where
+-- | Git-tool operations used by the pipeline. Today: the bracketed worktree
+-- snapshot. Future git-shelling helpers (clean-tree check, HEAD-SHA
+-- resolve) live here too.
+module CI.Git (withSnapshotWorktree) where
 
 import CI.Resolve (gitBin)
 import Control.Exception (SomeException, bracket_, catch)
@@ -19,6 +17,11 @@ import System.Process (callProcess)
 -- crashed and left a stale worktree at @snap@) do we attempt a
 -- @worktree remove --force@ and retry — saves a fork+exec on every
 -- normal run.
+--
+-- Strict-mode CI runs the whole pipeline inside this worktree so that
+-- (a) edits to the original working tree mid-pipeline can't leak into
+-- later recipes, and (b) @git rev-parse HEAD@ from inside any recipe
+-- always returns the same pinned SHA.
 withSnapshotWorktree :: FilePath -> IO a -> IO a
 withSnapshotWorktree snap action =
   bracket_

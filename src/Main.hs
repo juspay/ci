@@ -24,7 +24,7 @@ import CI.Justfile (RecipeName, fetchDump, justBin)
 import CI.Observer (runObserver)
 import CI.ProcessCompose (ProcessCompose, toProcessCompose)
 import CI.Runner (ServerMode (..), runPipeline)
-import CI.Snapshot (withSnapshotWorktree)
+import CI.Git (withSnapshotWorktree)
 import Control.Applicative (many, (<|>))
 import Control.Concurrent.Async (link, waitCatch, withAsync)
 import qualified Data.ByteString as BS
