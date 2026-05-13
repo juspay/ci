@@ -16,23 +16,18 @@
 --     'CI.Observer' and post a GitHub commit status per transition.
 module Main where
 
-import CI.CommitStatus
-  ( CommitStatus (..),
-    mkContext,
-    postStatus,
-  )
-import CI.Resolve (RepoCoords, Sha, ensureCleanTree, resolveRepoCoords, resolveSha)
+import CI.CommitStatus (postConsumer)
+import CI.Resolve (ensureCleanTree, resolveRepoCoords, resolveSha)
 import CI.Entrypoint (findEntrypoint)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (RecipeName, fetchDump, justBin)
-import CI.Observer (ProcessState (..), ProcessStatus (..), runObserver)
+import CI.Observer (runObserver)
 import CI.ProcessCompose (ProcessCompose, toProcessCompose)
 import CI.Runner (ServerMode (..), runPipeline)
 import CI.Snapshot (withSnapshotWorktree)
 import Control.Applicative (many, (<|>))
 import Control.Concurrent.Async (link, waitCatch, withAsync)
 import qualified Data.ByteString as BS
-import Data.Foldable (for_)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
@@ -113,22 +108,6 @@ runStrict runDir extraArgs = do
       -- process-compose exits, so this is bounded by the close handshake).
       _ <- waitCatch obs
       exitWith ec
-
--- | Translate a single 'ProcessState' into at most one 'postStatus' call,
--- under the @ci/\<recipe\>@ context. Non-terminal states without a
--- 'CommitStatus' analogue drop on the floor via 'Nothing'.
-postConsumer :: RepoCoords -> Sha -> ProcessState -> IO ()
-postConsumer coords sha ps =
-  for_ (psToCommitStatus ps) (postStatus coords sha (mkContext (name ps)))
-
-psToCommitStatus :: ProcessState -> Maybe CommitStatus
-psToCommitStatus ps = case (status ps, exit_code ps) of
-  (PsRunning, _) -> Just Pending
-  (PsCompleted, 0) -> Just Success
-  (PsCompleted, _) -> Just Failure
-  (PsSkipped, _) -> Just Error
-  (PsErrored, _) -> Just Error
-  (PsOther _, _) -> Nothing
 
 parserInfo :: ParserInfo Command
 parserInfo =

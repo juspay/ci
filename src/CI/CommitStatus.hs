@@ -21,10 +21,13 @@ module CI.CommitStatus
 
     -- * Posting
     postStatus,
+    postConsumer,
   )
 where
 
+import CI.Observer (ProcessState (..), ProcessStatus (..))
 import CI.Resolve (RepoCoords (..), Sha (..))
+import Data.Foldable (for_)
 import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -55,7 +58,7 @@ data CommitStatus = Pending | Success | Failure | Error
   deriving stock (Show, Eq)
 
 postStatus :: RepoCoords -> Sha -> Context -> CommitStatus -> IO ()
-postStatus coords (Sha sha) (Context ctx) status = do
+postStatus coords (Sha sha) (Context ctx) cs = do
   let endpoint =
         "/repos/"
           <> T.unpack coords.owner
@@ -69,14 +72,14 @@ postStatus coords (Sha sha) (Context ctx) status = do
           "POST",
           endpoint,
           "-f",
-          "state=" <> T.unpack (wireState status),
+          "state=" <> T.unpack (wireState cs),
           "-f",
           "context=" <> T.unpack ctx,
           "-f",
-          "description=" <> T.unpack (wireDescription status)
+          "description=" <> T.unpack (wireDescription cs)
         ]
   (ec, _, ghStderr) <- readProcessWithExitCode ghBin args ""
-  let line = "gh: " <> T.unpack ctx <> " " <> T.unpack (wireState status)
+  let line = "gh: " <> T.unpack ctx <> " " <> T.unpack (wireState cs)
   case ec of
     ExitSuccess -> hPutStrLn stderr line
     ExitFailure n ->
@@ -93,3 +96,20 @@ wireDescription Pending = "Running"
 wireDescription Success = "Succeeded"
 wireDescription Failure = "Failed"
 wireDescription Error = "Errored"
+
+-- | An observer consumer (see "CI.Observer") that translates each
+-- 'ProcessState' into at most one 'postStatus' call under the
+-- @ci/\<recipe\>@ context. Non-terminal states ('PsOther') drop on the
+-- floor.
+postConsumer :: RepoCoords -> Sha -> ProcessState -> IO ()
+postConsumer coords sha ps =
+  for_ (psToCommitStatus ps) (postStatus coords sha (mkContext (name ps)))
+
+psToCommitStatus :: ProcessState -> Maybe CommitStatus
+psToCommitStatus ps = case (status ps, exit_code ps) of
+  (PsRunning, _) -> Just Pending
+  (PsCompleted, 0) -> Just Success
+  (PsCompleted, _) -> Just Failure
+  (PsSkipped, _) -> Just Error
+  (PsErrored, _) -> Just Error
+  (PsOther _, _) -> Nothing
