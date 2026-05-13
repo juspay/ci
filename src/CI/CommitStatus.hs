@@ -14,6 +14,7 @@
 -- recipe's own exit code.
 module CI.CommitStatus
   ( ResolveError (..),
+    ensureCleanTree,
     populatePosterEnv,
     buildPoster,
   )
@@ -72,6 +73,10 @@ data ResolveError
   = ResolveShaFailed Int String
   | ResolveRepoFailed Int String
   | UnexpectedNameWithOwner String
+  | GitStatusFailed Int String
+  | -- | The working tree has uncommitted changes; carries the @git status
+    -- --porcelain@ lines so the user can see what's dirty.
+    DirtyTree [Text]
   deriving stock (Show)
 
 instance Display ResolveError where
@@ -81,6 +86,24 @@ instance Display ResolveError where
     "gh repo view failed (" <> displayBuilder n <> "): " <> displayBuilder (T.pack err)
   displayBuilder (UnexpectedNameWithOwner out) =
     "unexpected nameWithOwner from gh: " <> displayBuilder (T.pack out)
+  displayBuilder (GitStatusFailed n err) =
+    "git status --porcelain failed (" <> displayBuilder n <> "): " <> displayBuilder (T.pack err)
+  displayBuilder (DirtyTree paths) =
+    "working tree is dirty (CI=true requires a clean tree); commit or stash first:\n"
+      <> mconcat ["  " <> displayBuilder p <> "\n" | p <- paths]
+
+-- | Refuse the run if the working tree has uncommitted changes. Strict mode
+-- demands the SHA on the green check exactly match the bytes that were
+-- tested; a dirty tree breaks that invariant by definition.
+ensureCleanTree :: IO (Either ResolveError ())
+ensureCleanTree = do
+  (ec, out, err) <- readProcessWithExitCode gitBin ["status", "--porcelain"] ""
+  pure $ case ec of
+    ExitFailure n -> Left (GitStatusFailed n err)
+    ExitSuccess ->
+      case filter (not . T.null) (T.lines (T.pack out)) of
+        [] -> Right ()
+        dirty -> Left (DirtyTree dirty)
 
 resolveSha :: IO (Either ResolveError Sha)
 resolveSha = do
