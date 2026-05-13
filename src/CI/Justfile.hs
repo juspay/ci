@@ -22,6 +22,7 @@ module CI.Justfile
     -- * Fetching
     FetchError (..),
     fetchDump,
+    justBin,
   )
 where
 

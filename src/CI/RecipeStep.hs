@@ -1,6 +1,5 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 -- | Per-recipe lifecycle wrapper. Each process-compose vertex invokes this
 -- via the @run-step@ subcommand; the wrapper emits 'Running', spawns
@@ -23,15 +22,11 @@ module CI.RecipeStep
   )
 where
 
-import CI.Justfile (RecipeName)
+import CI.Justfile (RecipeName, justBin)
 import qualified Data.Text as T
 import Data.Text.Display (display)
 import System.Exit (ExitCode (..))
 import System.Process (proc, waitForProcess, withCreateProcess)
-import System.Which (staticWhich)
-
-justBin :: FilePath
-justBin = $(staticWhich "just")
 
 -- | The three observable states of a recipe execution. The lifecycle does not
 -- model an out-of-band "error" (infra failure) — that vocabulary belongs to
