@@ -97,12 +97,12 @@ runObserver sockPath consumers = do
               | otherwise -> for_ consumers ($ ev)
           loop conn
 
--- | Block (with a 30-attempt × 100ms backoff = ~3s ceiling) until the UDS
--- path exists on disk. Process-compose creates the socket synchronously
--- during startup, so 3s is generous; if we still don't see it, the next
--- 'S.connect' call will fail loudly.
+-- | Block (with a 100-attempt × 100ms backoff = ~10s ceiling) until the UDS
+-- path exists on disk. Process-compose can take a couple of seconds to
+-- create the socket during startup; if we still don't see it after 10s,
+-- the next 'S.connect' call will fail loudly.
 waitForSocket :: FilePath -> IO ()
-waitForSocket path = go (30 :: Int)
+waitForSocket path = go (100 :: Int)
   where
     go 0 = pure ()
     go n = do

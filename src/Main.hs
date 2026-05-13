@@ -40,7 +40,6 @@ import Data.Foldable (for_)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
-import Data.Time.Clock.POSIX (getPOSIXTime)
 import qualified Data.Yaml as Y
 import Options.Applicative
   ( Parser,
@@ -56,7 +55,7 @@ import Options.Applicative
     (<**>),
   )
 import qualified Options.Applicative as O (command)
-import System.Directory (getTemporaryDirectory)
+import System.Directory (getCurrentDirectory)
 import System.Environment (lookupEnv)
 import System.Exit (die, exitWith)
 import System.FilePath ((</>))
@@ -117,13 +116,15 @@ psToCommitStatus ps = case (status ps, exit_code ps) of
   ("Error", _) -> Just Error
   _ -> Nothing
 
--- | Path for the transient process-compose API UDS. Microsecond timestamp
--- suffix so concurrent runs don't collide.
+-- | Path for the process-compose API UDS: @\<cwd\>/.ci-pc.sock@. Per-repo
+-- (not per-run) by design — process-compose refuses to start if the
+-- socket is live, which is exactly the "no concurrent CI runs in the same
+-- repo" semantics we want. Stale socket files (process-compose died
+-- without cleanup) are removed by process-compose itself on startup.
 pickSocketPath :: IO FilePath
 pickSocketPath = do
-  tmp <- getTemporaryDirectory
-  now <- getPOSIXTime
-  pure $ tmp </> ("ci-pc-" <> show (round (now * 1e6) :: Integer) <> ".sock")
+  cwd <- getCurrentDirectory
+  pure $ cwd </> ".ci-pc.sock"
 
 parserInfo :: ParserInfo Command
 parserInfo =
