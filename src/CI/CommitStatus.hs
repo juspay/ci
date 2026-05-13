@@ -20,7 +20,6 @@ import CI.Resolve (RepoCoords (..), Sha (..))
 import CI.Subprocess (runSubprocess)
 import qualified CI.Subprocess as Sub
 import Data.Foldable (for_)
-import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
@@ -35,7 +34,7 @@ ghBin = $(staticWhich "gh")
 -- the constructor is intentionally hidden so the @ci/\<recipe\>@ naming
 -- convention lives in one place.
 newtype Context = Context Text
-  deriving newtype (Show, Eq, IsString)
+  deriving newtype (Show)
 
 -- | The single source of truth for status-check context names: @ci/\<recipe\>@.
 mkContext :: Display a => a -> Context
