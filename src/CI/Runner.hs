@@ -1,5 +1,4 @@
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 -- | Invoke the @process-compose@ binary against an in-memory
 -- 'ProcessCompose' config. The YAML is piped on stdin (@-f /dev/stdin@) so
@@ -11,18 +10,12 @@ module CI.Runner
   )
 where
 
-import CI.ProcessCompose (ProcessCompose)
+import CI.ProcessCompose (ProcessCompose, processComposeBin)
 import qualified Data.ByteString as BS
 import qualified Data.Yaml as Y
 import System.Exit (ExitCode, die)
 import System.IO (hClose)
 import System.Process (CreateProcess (..), StdStream (..), proc, waitForProcess, withCreateProcess)
-import System.Which (staticWhich)
-
--- | Absolute path to the @process-compose@ binary, baked in at compile time
--- via Nix (see @settings.ci.extraBuildTools@ in @flake.nix@).
-processComposeBin :: FilePath
-processComposeBin = $(staticWhich "process-compose")
 
 -- | Selects how process-compose's HTTP API surface is exposed (or not).
 -- 'NoServer' suppresses the API entirely — used for local-mode dev runs

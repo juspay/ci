@@ -3,6 +3,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 -- | Assemble a @process-compose@ YAML config from a pre-validated execution graph.
 module CI.ProcessCompose
@@ -16,6 +17,9 @@ module CI.ProcessCompose
 
     -- * Assembly
     toProcessCompose,
+
+    -- * Binary
+    processComposeBin,
   )
 where
 
@@ -27,6 +31,12 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
+import System.Which (staticWhich)
+
+-- | Absolute path to the @process-compose@ binary, baked in at compile time
+-- via Nix (see @settings.ci.extraBuildTools@ in @flake.nix@).
+processComposeBin :: FilePath
+processComposeBin = $(staticWhich "process-compose")
 
 -- | Aeson 'Options' that translate @CamelCase@ constructor tags into
 -- @snake_case@, matching process-compose's wire conventions
