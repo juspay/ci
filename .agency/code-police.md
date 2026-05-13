@@ -166,19 +166,40 @@ _Anti-patterns_:
 
 ## main-is-thin
 
-`src/Main.hs` is the harness: argv → parse → dispatch → exit. Anything more — orchestration, mode-specific IO, runtime-artifact layout, business records, `staticWhich` binary paths — moves into a `CI.*` module so adding a feature doesn't fatten Main.
+`src/Main.hs` is the harness: argv → parse → dispatch → exit. Anything more — orchestration, mode-specific IO, runtime-artifact layout, domain records, binary-path lookups — moves into a sibling module so adding a feature doesn't fatten Main.
 
 _How to apply_:
 
-- Main hosts at most: the `Command` sum, the parser builder, `main`, and (optionally) a tiny `dieOnLeft`-style boundary helper if no other module owns it.
-- Per-mode bodies (e.g. `runLocal`, `runStrict`), data records that describe runtime artifacts (e.g. a `RunDir` carrying path layout), and assembly functions that walk multiple subsystems (e.g. `buildProcessCompose` chaining fetch → entrypoint → reach → lower → toProcessCompose) all live in a `CI.Pipeline`-shaped module, not in Main.
-- Heuristic: if Main exceeds ~70 lines (imports + Command + parser + main + dispatch + one tiny helper), check whether a new function or record snuck in that belongs in `CI.*`.
+- Main hosts at most: the command sum, the parser builder, `main`, and (optionally) a tiny boundary helper if no other module owns it.
+- Per-mode bodies, records that describe runtime artifacts, and assembly functions that walk multiple subsystems all live in a sibling module — not in Main.
+- Heuristic: if Main exceeds ~70 lines (imports + command sum + parser + main + dispatch + one tiny helper), check whether a new function or record snuck in that belongs elsewhere.
 
 _Anti-patterns_:
 
-- `runLocal`/`runStrict` (or any per-mode orchestration) defined in Main.
-- `Process*` records, path conventions, command-builders defined in Main.
-- A `RunDir`-shaped record threaded through Main's helpers — should live in the module that owns the convention.
+- Per-mode orchestration functions defined in Main.
+- Domain records, path conventions, command-builders defined in Main.
+- A runtime-artifact record threaded through Main's helpers — should live in the module that owns the convention.
+
+## encapsulation-passes-grep
+
+A module that claims to own an interface — a CLI binary, a foreign API, a wire protocol, a low-level handle, an internal subsystem — must be the only file that touches its raw primitives. The module name, top-level haddock, and export list are *claims* about a boundary; the import graph is the *test* of that boundary. When the two disagree, the boundary doesn't exist — only the label does.
+
+The mechanical check is grep. For each raw primitive a wrapper module exposes (binary path, untyped handle, low-level identifier — anything that sits *below* the wrapper's typed operations), grep the codebase for it. Exactly one file should mention the primitive: the wrapper itself. Two or more is a falsified encapsulation, full stop. No labels, no narratives, no judgement — the grep returns 1 or it doesn't.
+
+_How to apply_:
+
+- For each module whose stated concern is "wrap interface X", enumerate the raw primitives it exports alongside its typed operations.
+- Grep the codebase for each primitive. One consumer (the wrapper) passes. Two or more consumers means the encapsulation is fiction.
+- When grep returns more than one file, pick one: (a) lift the second caller's usage into a new typed operation on the wrapper, then route the caller through it; (b) demote the wrapper's claim — rename it or rewrite its haddock so it no longer pretends to own the interface.
+- Treat haddock cross-references between sibling modules as *confessions*, not documentation. Phrases like "the other half lives in X", "shared from here", "see also X for the actual call" are reports that one concern is split across two modules. Run the grep before accepting the split as intentional.
+- Run this check before approving any change that adds a consumer of a wrapper module's primitive, and on every PR that touches a wrapper module.
+
+_Anti-patterns_:
+
+- A wrapper module exports both typed operations *and* the raw primitive, and a consumer module imports the raw primitive and rebuilds the same shape of call the wrapper was supposed to encapsulate.
+- A wrapper module retains only an ancillary operation (a discovery query, a ping, a health check) while the principal operation lives in a consumer module that reaches past the wrapper. The label outlives the encapsulation.
+- Justifying a leaked primitive with "only one other call site needs it" or "the second consumer is just composing." Composition consumes the wrapper's typed API; reaching for the primitive *is* bypass, not composition. Call-site count is irrelevant — the concern is split or it isn't.
+- Evaluating a module's boundary from its haddock, name, and exports without checking who imports it and what they do with it. The surface is written by the boundary's author and will always agree with the boundary; the import graph is written by consumers and tells you what they actually needed.
 
 ## code-style
 
