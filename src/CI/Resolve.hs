@@ -14,10 +14,11 @@
 module CI.Resolve
   ( RepoCoords (..),
     Sha (..),
-    ResolveError (..),
+    ResolveError,
     ensureCleanTree,
     resolveRepoCoords,
     resolveSha,
+    gitBin,
   )
 where
 
@@ -32,12 +33,21 @@ import System.Which (staticWhich)
 ghBin :: FilePath
 ghBin = $(staticWhich "gh")
 
+-- | Absolute path to the @git@ binary, baked in at compile time via Nix.
+-- Re-exported so other modules ("CI.Snapshot") that need to shell out to
+-- @git@ don't each splice their own.
 gitBin :: FilePath
 gitBin = $(staticWhich "git")
 
+-- | The two halves of a GitHub repository identifier, as in
+-- @\<owner\>/\<repo\>@. Resolved once from @gh repo view@ and threaded into
+-- 'CI.CommitStatus.postStatus' alongside the 'Sha'.
 data RepoCoords = RepoCoords {owner :: Text, repo :: Text}
   deriving stock (Show, Eq)
 
+-- | A git commit SHA — what 'CI.CommitStatus.postStatus' attaches each
+-- status check to. The constructor is exposed so consumers can pattern-match,
+-- but resolution always goes through 'resolveSha'.
 newtype Sha = Sha Text
   deriving newtype (Show, Eq, IsString)
 
@@ -81,6 +91,9 @@ ensureCleanTree = do
         [] -> Right ()
         dirty -> Left (DirtyTree dirty)
 
+-- | Resolve the current HEAD SHA via @git rev-parse HEAD@. Used once at
+-- strict-mode startup so every commit-status post against this run targets
+-- the same commit.
 resolveSha :: IO (Either ResolveError Sha)
 resolveSha = do
   (ec, out, err) <- readProcessWithExitCode gitBin ["rev-parse", "HEAD"] ""
@@ -88,6 +101,9 @@ resolveSha = do
     ExitSuccess -> Right $ Sha (T.strip (T.pack out))
     ExitFailure n -> Left (ResolveShaFailed n err)
 
+-- | Resolve the @\<owner\>/\<repo\>@ this checkout reports to via
+-- @gh repo view --json nameWithOwner@. Falls out as 'RepoCoords' so callers
+-- never see a slash-separated string.
 resolveRepoCoords :: IO (Either ResolveError RepoCoords)
 resolveRepoCoords = do
   (ec, out, err) <-

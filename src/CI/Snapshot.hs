@@ -1,6 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 -- | Bracketed @git worktree@ snapshot of HEAD. Strict-mode CI runs the
 -- whole pipeline inside this worktree so that (a) edits to the original
@@ -13,12 +12,9 @@
 -- ('withSnapshotWorktree') is the seam.
 module CI.Snapshot (withSnapshotWorktree) where
 
+import CI.Resolve (gitBin)
 import Control.Exception (SomeException, bracket_, try)
 import System.Process (callProcess)
-import System.Which (staticWhich)
-
-gitBin :: FilePath
-gitBin = $(staticWhich "git")
 
 -- | Create a @git worktree@ at HEAD pinned at @snap@, run the action, and
 -- remove the worktree on any exit path (success, failure, or exception,
