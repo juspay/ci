@@ -9,19 +9,22 @@
 module CI.Snapshot (withSnapshotWorktree) where
 
 import CI.Resolve (gitBin)
-import Control.Exception (SomeException, bracket_, try)
+import Control.Exception (SomeException, bracket_, catch)
 import System.Process (callProcess)
 
 -- | Create a @git worktree@ at HEAD pinned at @snap@, run the action, and
 -- remove the worktree on any exit path (success, failure, or exception,
--- including 'exitWith'). If a previous run crashed and left a stale worktree
--- at @snap@, a best-effort @git worktree remove --force@ is attempted before
--- creation so the next run isn't blocked.
+-- including 'exitWith'). On the happy path this is one @git worktree add@
+-- invocation; only if @add@ fails (typically because a previous run
+-- crashed and left a stale worktree at @snap@) do we attempt a
+-- @worktree remove --force@ and retry — saves a fork+exec on every
+-- normal run.
 withSnapshotWorktree :: FilePath -> IO a -> IO a
-withSnapshotWorktree snap action = do
-  _ :: Either SomeException () <-
-    try (callProcess gitBin ["worktree", "remove", "--force", snap])
+withSnapshotWorktree snap action =
   bracket_
-    (callProcess gitBin ["worktree", "add", "--detach", snap, "HEAD"])
-    (callProcess gitBin ["worktree", "remove", "--force", snap])
+    (tryAdd `catch` \(_ :: SomeException) -> cleanup >> tryAdd)
+    cleanup
     action
+  where
+    tryAdd = callProcess gitBin ["worktree", "add", "--detach", snap, "HEAD"]
+    cleanup = callProcess gitBin ["worktree", "remove", "--force", snap]
