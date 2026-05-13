@@ -64,17 +64,11 @@ data ProcessState = ProcessState
   deriving stock (Show, Generic)
   deriving anyclass (FromJSON)
 
--- | Mirrors process-compose's @ProcessStateEvent@ wire type. The
--- @snapshot@ field (true on initial replay, omitted on live transitions)
--- is decoded but stripped before consumers see anything — the observer
--- treats both kinds identically, since posting "pending" for a recipe
--- that's already running is idempotent on GitHub's side, and processing
--- snapshot frames catches recipes whose @Running@ event preceded our
--- connection.
-data ProcessStateEvent = ProcessStateEvent
-  { snapshot :: Maybe Bool,
-    state :: ProcessState
-  }
+-- | Mirrors process-compose's @ProcessStateEvent@ wire type. We model only
+-- the @state@ field; the @snapshot@ flag (true on initial replay, omitted
+-- on live transitions) is ignored — aeson drops unknown keys by default,
+-- and the observer treats both kinds identically.
+newtype ProcessStateEvent = ProcessStateEvent {state :: ProcessState}
   deriving stock (Show, Generic)
   deriving anyclass (FromJSON)
 
