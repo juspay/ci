@@ -11,9 +11,11 @@ executable ci
     import:           warnings
     main-is:          Main.hs
     other-modules:    CI.Entrypoint
+                      CI.GitHubStatus
                       CI.Graph
                       CI.Justfile
                       CI.ProcessCompose
+                      CI.RecipeStep
                       CI.Runner
     build-depends:
         , aeson

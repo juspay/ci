@@ -24,8 +24,12 @@ processComposeBin = $(staticWhich "process-compose")
 -- mode (TUI and HTTP server both disabled), and forward its exit code.
 -- 'withCreateProcess' brackets the subprocess so the stdin handle is closed
 -- and the child reaped even if 'BS.hPut' throws (e.g. broken pipe).
-runPipeline :: ProcessCompose -> IO ExitCode
-runPipeline pc =
+--
+-- @extraArgs@ are appended verbatim after the baseline flags, so callers can
+-- override or extend process-compose's behavior (e.g. @--log-level debug@,
+-- @--ordered-shutdown@) without this module knowing the flag surface.
+runPipeline :: [String] -> ProcessCompose -> IO ExitCode
+runPipeline extraArgs pc =
   withCreateProcess cp $ \mhin _ _ ph -> case mhin of
     Nothing -> die "process-compose: stdin pipe was not created"
     Just hin -> do
@@ -34,6 +38,7 @@ runPipeline pc =
       waitForProcess ph
   where
     cp =
-      (proc processComposeBin ["up", "-f", "/dev/stdin", "-t=false", "--no-server"])
+      (proc processComposeBin baseArgs)
         { std_in = CreatePipe
         }
+    baseArgs = ["up", "-f", "/dev/stdin", "-t=false", "--no-server"] <> extraArgs
