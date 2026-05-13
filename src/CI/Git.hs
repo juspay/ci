@@ -8,11 +8,8 @@
 -- precondition, and a bracketed worktree snapshot. All shell out to
 -- @git@; the binary path lives here as 'gitBin'.
 module CI.Git
-  ( -- * Binary
-    gitBin,
-
-    -- * Values
-    Sha (..),
+  ( -- * Values
+    Sha,
 
     -- * Operations
     GitError (..),
@@ -24,7 +21,6 @@ where
 
 import CI.Subprocess (SubprocessError, runSubprocess)
 import Control.Exception (SomeException, bracket_, catch)
-import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display (..))
@@ -32,14 +28,17 @@ import System.Process (callProcess)
 import System.Which (staticWhich)
 
 -- | Absolute path to the @git@ binary, baked in at compile time via Nix.
+-- Not exported: every git shell-out in the project goes through one of
+-- the typed operations below.
 gitBin :: FilePath
 gitBin = $(staticWhich "git")
 
--- | A git commit SHA — what 'CI.CommitStatus.postStatus' attaches each
--- status check to. The constructor is exposed so consumers can pattern-match,
--- but resolution always goes through 'resolveSha'.
+-- | A git commit SHA — what 'CI.CommitStatus.postConsumer' attaches each
+-- status check to. Opaque: minted only by 'resolveSha'; rendered to Text
+-- via 'display'.
 newtype Sha = Sha Text
-  deriving newtype (Show, Eq, IsString)
+  deriving stock (Show, Eq)
+  deriving newtype (Display)
 
 -- | Failures from the git operations in this module. Subprocess failures
 -- wrap 'SubprocessError'; the @binary failed (N): stderr@ formatting lives

@@ -11,19 +11,22 @@
 -- arguments — no raw endpoints, no @-f key=value@ pairs.
 module CI.Gh
   ( -- * Values
-    Repo (..),
+    Owner,
+    RepoName,
+    Repo,
     CommitStatus (..),
-    Context (..),
+    Context,
     CommitStatusPost (..),
 
     -- * Operations
     GhError (..),
     viewRepo,
+    contextFrom,
     postCommitStatus,
   )
 where
 
-import CI.Git (Sha (..))
+import CI.Git (Sha)
 import CI.Subprocess (SubprocessError, runSubprocess)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -36,11 +39,22 @@ import System.Which (staticWhich)
 ghBin :: FilePath
 ghBin = $(staticWhich "gh")
 
+-- | A GitHub owner login (user or org). Opaque; minted only by 'viewRepo'.
+newtype Owner = Owner Text
+  deriving stock (Show, Eq)
+  deriving newtype (Display)
+
+-- | A GitHub repository name (the @name@ half of @nameWithOwner@). Opaque;
+-- minted only by 'viewRepo'.
+newtype RepoName = RepoName Text
+  deriving stock (Show, Eq)
+  deriving newtype (Display)
+
 -- | A GitHub repository, matching @gh@'s vocabulary: an owner login plus a
 -- repository name — the two halves of @nameWithOwner@. Resolved once from
 -- @gh repo view@ and threaded into 'CI.CommitStatus.postConsumer'
 -- alongside the 'CI.Git.Sha'.
-data Repo = Repo {owner :: Text, name :: Text}
+data Repo = Repo {owner :: Owner, name :: RepoName}
   deriving stock (Show, Eq)
 
 -- | Failures from the gh operations in this module.
@@ -67,7 +81,7 @@ viewRepo = do
   pure $ case result of
     Left e -> Left (GhSubprocess e)
     Right out -> case T.splitOn "/" (T.strip (T.pack out)) of
-      [o, n] | not (T.null o), not (T.null n) -> Right (Repo o n)
+      [o, n] | not (T.null o), not (T.null n) -> Right (Repo (Owner o) (RepoName n))
       _ -> Left (UnexpectedNameWithOwner out)
 
 -- | The four GitHub-defined commit-status states. See
@@ -83,11 +97,19 @@ instance Display CommitStatus where
   displayBuilder Error = "error"
 
 -- | A status-check context: the unique label that groups posts of the same
--- check on a PR. GitHub treats this as opaque; the @ci/\<recipe\>@ naming
--- convention is CI policy, owned by "CI.CommitStatus".
+-- check on a PR. Opaque; minted only via 'contextFrom'. GitHub treats the
+-- value itself as free-form text — the @ci/\<recipe\>@ naming convention
+-- is CI policy, owned by "CI.CommitStatus".
 newtype Context = Context Text
   deriving stock (Show)
   deriving newtype (Display)
+
+-- | The smart constructor for 'Context'. The value is opaque to GitHub, so
+-- this is just @Context@ today — the named entry point makes every
+-- minting site searchable and gives one place to add validation later
+-- without touching call sites.
+contextFrom :: Text -> Context
+contextFrom = Context
 
 -- | The fields the @Create-a-commit-status@ endpoint expects, grouped so
 -- callers don't pass three positional values. @description@ is free-form
@@ -102,8 +124,8 @@ data CommitStatusPost = CommitStatusPost
 -- post. The endpoint URL and wire encoding of 'CommitStatus' are gh-API
 -- details owned here; the caller passes only typed values.
 postCommitStatus :: Repo -> Sha -> CommitStatusPost -> IO (Either SubprocessError ())
-postCommitStatus repo (Sha sha) post = do
-  let endpoint = "/repos/" <> repo.owner <> "/" <> repo.name <> "/statuses/" <> sha
+postCommitStatus repo sha post = do
+  let endpoint = "/repos/" <> display repo.owner <> "/" <> display repo.name <> "/statuses/" <> display sha
       args =
         [ "api",
           "-X",

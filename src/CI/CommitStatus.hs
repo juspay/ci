@@ -14,7 +14,7 @@
 -- API call must not poison the recipe's own exit code.
 module CI.CommitStatus (postConsumer) where
 
-import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context (..), Repo, postCommitStatus)
+import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
 import CI.Git (Sha)
 import CI.ProcessCompose (ProcessState (..), ProcessStatus (..))
 import qualified CI.Subprocess as Sub
@@ -27,7 +27,7 @@ import System.IO (hPutStrLn, stderr)
 -- | The single source of truth for status-check context names: @ci/\<recipe\>@.
 -- Wraps 'Context' so the prefix lives in exactly one place.
 mkContext :: Display a => a -> Context
-mkContext recipe = Context ("ci/" <> display recipe)
+mkContext recipe = contextFrom ("ci/" <> display recipe)
 
 -- | Issue one commit-status POST and log the attempt to stderr with a
 -- @gh:@ prefix. Failures are logged with @FAILED@ and the exit code,

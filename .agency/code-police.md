@@ -147,20 +147,26 @@ _Anti-patterns_:
 
 ## prefer-newtype-over-string
 
-Domain identifiers and values typed as `Text`/`String` should be wrapped in newtypes. A `Text` carrying a recipe name, user ID, URL, file path, semver string, etc. is a domain concept; the type system should know that. Without the newtype, the compiler can't distinguish a `Map Text Recipe` keyed by recipe name from one keyed by user ID, and signatures with several `Text` parameters become impossible to call correctly without re-reading docs.
+Domain identifiers and values typed as `Text`/`String` should be wrapped in newtypes — **and the wrapping must be opaque**. A newtype with its constructor exported (`Foo (..)`) is a type alias with extra syntax: any caller can mint a `Foo` from arbitrary `Text`, or pattern-match to strip the type and get raw `Text` back. The compiler stops protecting you the moment either escape hatch is open.
+
+The newtype's public surface is three things, all in the defining module: a controlled set of **smart constructors** (`IsString` for literals, named functions for parsed/composed values), a `Display` instance as the **canonical destructor**, and **typed operations** that consume the value without unwrapping it.
 
 _How to apply_:
 
 - Wrap each domain concept in a positional `newtype RecipeName = RecipeName Text` (no field accessor). Derive `Eq`, `Ord`, `FromJSON`/`ToJSON`, and — for newtypes used as `Map` keys — `FromJSONKey`/`ToJSONKey` via `deriving newtype`. Runtime cost is zero.
-- Derive `IsString` so callers construct from string literals: `"ci" :: RecipeName` with `OverloadedStrings`. That's the `fromString` half.
-- Derive `Show` newtype-style for debugging and error messages — the underlying type's `Show` (e.g. Text's `"ci"`) is good enough. For richer display, define a `Display` typeclass; don't export an ad-hoc unwrapper.
-- **Keep the constructor unexported.** External modules go through `IsString`/`Show`/`FromJSON` — never via a raw accessor. The whole point of the newtype is that the type-laundering API doesn't exist.
+- **Export just the type name (`Foo`), never `Foo (..)`.** The constructor stays inside the defining module.
+- **For literal-driven construction**: derive `IsString` so callers write `"ci" :: RecipeName` under `OverloadedStrings`.
+- **For parse- or policy-driven construction**: define a named smart constructor in the same module — e.g. `parseSha :: Text -> Maybe Sha`, `contextFrom :: Text -> Context`, `viewRepo :: IO (Either GhError Repo)`. That function is the only entry besides `IsString`; the constructor remains unexported.
+- **Destructure through `Display`, not the constructor.** Derive `deriving newtype Display` so consumers write `display foo` to get back to `Text`. Pattern-matching the constructor outside the defining module is forbidden — that's a `(Foo x) <- whatever` accessor in disguise.
+- **Records of newtypes, not records of `Text`.** A `data Foo = Foo { bar :: Text, baz :: Text }` whose fields are themselves domain identifiers is the same smell as a bare `Text` parameter. Each field is its own newtype; the record composes them.
 - Refactor signatures from `Text -> Map Text Foo -> Map Text [Text]` to `Name -> Map Name Foo -> Map Name [Name]` so the compiler catches swapped parameters.
 
 _Anti-patterns_:
 
-- Exporting `unRecipeName :: RecipeName -> Text` (or similar record accessors). That gives every caller a free pass to strip the type, defeating the newtype. `fromString`/`Show` cover construction and display; reach past them only inside the defining module.
-- Pattern-matching on the constructor outside the defining module to extract the inner value. Same as the above with extra steps.
+- Exporting `Foo (..)`. The constructor leaks the type-laundering API; the newtype is now decorative.
+- Exporting `unRecipeName :: RecipeName -> Text` (or similar record accessors). Same hole with a different shape.
+- Pattern-matching on the constructor outside the defining module to extract the inner value. Go through `display`, never the constructor.
+- A `data Foo = Foo { bar :: Text, baz :: Text }` whose fields are themselves domain identifiers. Bare `Text` in a public record is the same smell as a bare `Text` parameter.
 - `f :: Text -> Map Text Foo -> Either Text Bar` where the three `Text`s mean different things.
 - A `String` filepath, URL, ID, or token threaded as a plain `String`. If it has a domain meaning, it has a newtype.
 
