@@ -24,7 +24,6 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, try)
-import Control.Monad (forever)
 import Data.Aeson (FromJSON, eitherDecodeStrict)
 import qualified Data.ByteString.Lazy as BSL
 import Data.Foldable (for_)
@@ -76,23 +75,27 @@ type Consumer = ProcessStateEvent -> IO ()
 -- without ordering the spawn against socket creation.
 runObserver :: FilePath -> [Consumer] -> IO ()
 runObserver sockPath consumers = do
+  hPutStrLn stderr $ "observer: waiting for " <> sockPath
   waitForSocket sockPath
+  hPutStrLn stderr "observer: connecting"
   sock <- S.socket S.AF_UNIX S.Stream S.defaultProtocol
   S.connect sock (S.SockAddrUnix sockPath)
-  WS.runClientWithSocket sock "localhost" "/process/states/ws" WS.defaultConnectionOptions [] $ \conn ->
-    forever $ do
+  WS.runClientWithSocket sock "localhost" "/process/states/ws" WS.defaultConnectionOptions [] $ \conn -> do
+    hPutStrLn stderr "observer: connected, streaming events"
+    loop conn
+  where
+    loop conn = do
       result <- try (WS.receiveData conn)
       case result of
-        Left (e :: SomeException) -> do
-          hPutStrLn stderr $ "observer: connection closed (" <> show e <> ")"
-          WS.sendClose conn ("bye" :: Text)
-          fail "observer terminated"
-        Right (bs :: BSL.ByteString) ->
+        Left (e :: SomeException) ->
+          hPutStrLn stderr $ "observer: stream ended (" <> show e <> ")"
+        Right (bs :: BSL.ByteString) -> do
           case eitherDecodeStrict (BSL.toStrict bs) of
             Left err -> hPutStrLn stderr $ "observer: decode error: " <> err
             Right ev
               | isSnapshot ev -> pure ()
               | otherwise -> for_ consumers ($ ev)
+          loop conn
 
 -- | Block (with a 30-attempt × 100ms backoff = ~3s ceiling) until the UDS
 -- path exists on disk. Process-compose creates the socket synchronously

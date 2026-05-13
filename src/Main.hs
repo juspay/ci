@@ -34,7 +34,7 @@ import CI.ProcessCompose (ProcessCompose, toProcessCompose)
 import CI.Runner (ServerMode (..), runPipeline)
 import CI.Snapshot (withSnapshotWorktree)
 import Control.Applicative (many, (<|>))
-import Control.Concurrent.Async (withAsync)
+import Control.Concurrent.Async (link, withAsync)
 import qualified Data.ByteString as BS
 import Data.Foldable (for_)
 import Data.Text (Text)
@@ -97,7 +97,8 @@ runStrict extraArgs = do
   withSnapshotWorktree $ \snap -> do
     sockPath <- pickSocketPath
     pc <- buildProcessCompose (Just snap)
-    withAsync (runObserver sockPath [postConsumer coords sha]) $ \_ ->
+    withAsync (runObserver sockPath [postConsumer coords sha]) $ \obs -> do
+      link obs
       runPipeline (UnixSocket sockPath) extraArgs pc >>= exitWith
 
 -- | Translate a single 'ProcessStateEvent' into at most one 'postStatus'
