@@ -13,11 +13,11 @@ import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (fetchDump)
 import CI.ProcessCompose (ProcessCompose, toProcessCompose)
 import CI.Runner (runPipeline)
+import Control.Applicative ((<|>))
 import qualified Data.ByteString as BS
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
 import qualified Data.Yaml as Y
-import Control.Applicative ((<|>))
 import Options.Applicative
   ( Parser,
     ParserInfo,
