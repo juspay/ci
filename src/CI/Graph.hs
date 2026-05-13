@@ -3,16 +3,23 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Recipe-graph computations: reachability from a root, and a runnable
--- execution graph that bakes just's sequential-vs-parallel dep ordering into
--- explicit edges.
+-- | Recipe-graph computations. Two responsibilities live here:
+--
+--   * 'reachableSubgraph' — a stable, pure graph operation: restrict a
+--     recipe map to those reachable from a root.
+--
+--   * 'lowerToRunnerGraph' — the cross-system translation axis: encode
+--     @just@'s sequential-vs-parallel dependency semantics as explicit
+--     edges in a runner-friendly DAG. This is where any future change of
+--     orchestrator-shaped semantics (today: process-compose-style
+--     per-node @depends_on@) lands.
 module CI.Graph
   ( -- * Reachability
     reachableSubgraph,
     ReachError (..),
 
-    -- * Execution graph
-    buildExecutionGraph,
+    -- * just → runner-graph translation
+    lowerToRunnerGraph,
     OrderingConflict (..),
   )
 where
@@ -59,7 +66,8 @@ instance Display OrderingConflict where
     "recipe dependencies form a cycle: "
       <> displayBuilder (T.intercalate " -> " (display <$> NE.toList c))
 
--- | Build the directed execution graph for a recipe map.
+-- | Lower a recipe map to a runner-friendly DAG, translating @just@'s
+-- ordering semantics into explicit edges the orchestrator can consume.
 --
 -- Per recipe @R@ with deps @[d1..dn]@:
 --
@@ -72,10 +80,10 @@ instance Display OrderingConflict where
 --     /shared/ dep nodes is the only way to express caller-side ordering when
 --     the downstream runner only understands per-node @depends_on@; the
 --     cycle check guards against contradictory chains from different callers.
-buildExecutionGraph ::
+lowerToRunnerGraph ::
   Map.Map RecipeName Recipe ->
   Either OrderingConflict (G.AdjacencyMap RecipeName)
-buildExecutionGraph recipes =
+lowerToRunnerGraph recipes =
   case G.topSort g of
     Left c -> Left (OrderingConflict c)
     Right _ -> Right g

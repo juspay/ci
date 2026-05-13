@@ -9,7 +9,7 @@
 module Main where
 
 import CI.Entrypoint (findEntrypoint)
-import CI.Graph (buildExecutionGraph, reachableSubgraph)
+import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (fetchDump)
 import CI.ProcessCompose (ProcessCompose, toProcessCompose)
 import CI.Runner (runPipeline)
@@ -66,7 +66,7 @@ buildProcessCompose = do
   recipes <- dieOnLeft =<< fetchDump
   root <- dieOnLeft $ findEntrypoint recipes
   reachable <- dieOnLeft $ reachableSubgraph root recipes
-  graph <- dieOnLeft $ buildExecutionGraph reachable
+  graph <- dieOnLeft $ lowerToRunnerGraph reachable
   pure $ toProcessCompose graph
 
 -- | Render an 'Either' error via 'Display' and 'die' with its text.
