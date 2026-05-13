@@ -25,6 +25,7 @@ import Data.Aeson (ToJSON (..), camelTo2, defaultOptions, genericToJSON)
 import Data.Aeson.Types (Options (..))
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
+import qualified Data.Text as T
 import GHC.Generics (Generic)
 
 -- | Aeson 'Options' that translate @CamelCase@ constructor tags into
@@ -48,10 +49,19 @@ newtype ProcessCompose = ProcessCompose {processes :: Map.Map RecipeName Process
 data Process = Process
   { command :: Text,
     depends_on :: Map.Map RecipeName Dependency,
-    availability :: Availability
+    availability :: Availability,
+    -- | When set, process-compose @chdir@s the spawned recipe into this
+    -- directory before executing 'command'. Used in strict mode to pin
+    -- every recipe to an immutable @git worktree@ snapshot of HEAD.
+    -- 'Nothing' omits the field from the YAML so dev runs are unchanged.
+    working_dir :: Maybe Text
   }
   deriving stock (Generic)
-  deriving anyclass (ToJSON)
+
+-- Custom instance so 'Nothing' in 'working_dir' drops the field entirely
+-- rather than emitting @working_dir: null@.
+instance ToJSON Process where
+  toJSON = genericToJSON defaultOptions {omitNothingFields = True}
 
 -- | One entry inside @depends_on@: the condition under which the named
 -- dependency is considered satisfied.
@@ -92,17 +102,20 @@ instance ToJSON RestartPolicy where
 
 -- | Assemble a @process-compose@ config from a pre-validated execution graph.
 -- The caller supplies @mkCommand@, the shell command emitted for each
--- vertex; each outgoing edge becomes a @depends_on@ entry. Keeping command
--- construction out of this module lets callers vary how vertices are
--- invoked (bare @just@, a lifecycle wrapper, …) without the YAML emitter
--- knowing about any of those policies.
-toProcessCompose :: (RecipeName -> Text) -> G.AdjacencyMap RecipeName -> ProcessCompose
-toProcessCompose mkCommand g =
+-- vertex, and @workingDir@, the directory every recipe is @chdir@'d into
+-- (or 'Nothing' to leave the field off and let process-compose use its
+-- caller's cwd). Each outgoing edge becomes a @depends_on@ entry. Keeping
+-- both decisions out of this module lets callers vary how vertices are
+-- invoked and where they execute without the YAML emitter knowing about
+-- any of those policies.
+toProcessCompose :: Maybe FilePath -> (RecipeName -> Text) -> G.AdjacencyMap RecipeName -> ProcessCompose
+toProcessCompose workingDir mkCommand g =
   ProcessCompose $ Map.fromSet mkProcess (G.vertexSet g)
   where
     mkProcess name =
       Process
         { command = mkCommand name,
           depends_on = Map.fromSet (const (Dependency ProcessCompletedSuccessfully)) (G.postSet name g),
-          availability = Availability {restart = ExitOnFailure, exit_on_skipped = True}
+          availability = Availability {restart = ExitOnFailure, exit_on_skipped = True},
+          working_dir = T.pack <$> workingDir
         }

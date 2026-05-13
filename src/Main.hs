@@ -55,10 +55,10 @@ main = do
     Run extraArgs -> do
       strict <- (== Just "true") <$> lookupEnv "CI"
       when strict $ dieOnLeft =<< populatePosterEnv
-      pc <- buildProcessCompose =<< runStepCommand
+      pc <- buildProcessCompose Nothing =<< runStepCommand
       runPipeline extraArgs pc >>= exitWith
     DumpYaml -> do
-      pc <- buildProcessCompose =<< runStepCommand
+      pc <- buildProcessCompose Nothing =<< runStepCommand
       BS.putStr (Y.encode pc)
     RunStep name -> do
       poster <- buildPoster name
@@ -87,13 +87,13 @@ commandParser =
     )
     <|> pure (Run [])
 
-buildProcessCompose :: (RecipeName -> Text) -> IO ProcessCompose
-buildProcessCompose mkCommand = do
+buildProcessCompose :: Maybe FilePath -> (RecipeName -> Text) -> IO ProcessCompose
+buildProcessCompose workingDir mkCommand = do
   recipes <- dieOnLeft =<< fetchDump
   root <- dieOnLeft $ findEntrypoint recipes
   reachable <- dieOnLeft $ reachableSubgraph root recipes
   graph <- dieOnLeft $ lowerToRunnerGraph reachable
-  pure $ toProcessCompose mkCommand graph
+  pure $ toProcessCompose workingDir mkCommand graph
 
 dieOnLeft :: Display e => Either e a -> IO a
 dieOnLeft = either (die . T.unpack . display) pure
