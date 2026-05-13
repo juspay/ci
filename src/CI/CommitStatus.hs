@@ -2,7 +2,6 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 
 -- | GitHub commit-status wire format and the @gh@ CLI adapter. 'postStatus'
 -- issues a single REST call per transition and logs the attempt to stderr
@@ -11,8 +10,9 @@
 -- must not poison the recipe's own exit code.
 module CI.CommitStatus (postConsumer) where
 
+import CI.Gh (RepoCoords (..), ghBin)
+import CI.Git (Sha (..))
 import CI.ProcessCompose (ProcessState (..), ProcessStatus (..))
-import CI.Resolve (RepoCoords (..), Sha (..))
 import CI.Subprocess (runSubprocess)
 import qualified CI.Subprocess as Sub
 import Data.Foldable (for_)
@@ -20,10 +20,6 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
 import System.IO (hPutStrLn, stderr)
-import System.Which (staticWhich)
-
-ghBin :: FilePath
-ghBin = $(staticWhich "gh")
 
 -- | A GitHub status-check context (the unique label that groups posts of the
 -- same check, shown on the PR's checks panel). Construct via 'mkContext';

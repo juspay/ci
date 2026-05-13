@@ -17,14 +17,14 @@
 module Main where
 
 import CI.CommitStatus (postConsumer)
-import CI.Resolve (ensureCleanTree, resolveRepoCoords, resolveSha)
 import CI.Entrypoint (findEntrypoint)
+import CI.Gh (resolveRepoCoords)
+import CI.Git (ensureCleanTree, resolveSha, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (RecipeName, fetchDump, justBin)
 import CI.Observer (runObserver)
 import CI.ProcessCompose (ProcessCompose, ServerMode (..), UpInvocation (..), toProcessCompose)
 import CI.Runner (runPipeline)
-import CI.Git (withSnapshotWorktree)
 import Control.Applicative (many, (<|>))
 import Control.Concurrent.Async (link, waitCatch, withAsync)
 import qualified Data.ByteString as BS
