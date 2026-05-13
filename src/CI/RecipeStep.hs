@@ -45,11 +45,8 @@ toRecipeStatus (ExitFailure _) = Failed
 runStep :: (RecipeStatus -> IO ()) -> RecipeName -> IO ExitCode
 runStep onStatus name = do
   onStatus Running
-  exit <- spawnRecipe name
+  exit <-
+    withCreateProcess (proc justBin ["--no-deps", T.unpack (display name)]) $ \_ _ _ ph ->
+      waitForProcess ph
   onStatus (toRecipeStatus exit)
   pure exit
-
-spawnRecipe :: RecipeName -> IO ExitCode
-spawnRecipe name =
-  withCreateProcess (proc justBin ["--no-deps", T.unpack (display name)]) $ \_ _ _ ph ->
-    waitForProcess ph
