@@ -55,53 +55,59 @@ data Command
   = Run [String]
   | DumpYaml
 
+-- | The four artifact paths under @\$PWD\/.ci\/@. Built once at the top of
+-- 'main' so 'runLocal' and 'runStrict' both reference the same convention
+-- instead of hand-rolling @runDir \<\/\> "pc.log"@ at each call site.
+data RunDir = RunDir
+  { snap :: FilePath,
+    sock :: FilePath,
+    pcLog :: FilePath
+  }
+
 main :: IO ()
 main = do
   cmd <- execParser parserInfo
   case cmd of
     Run extraArgs -> do
-      runDir <- ensureRunDir
+      dirs <- ensureRunDir
       strict <- (== Just "true") <$> lookupEnv "CI"
       if strict
-        then runStrict runDir extraArgs
-        else runLocal runDir extraArgs
+        then runStrict dirs extraArgs
+        else runLocal dirs extraArgs
     DumpYaml -> do
       pc <- buildProcessCompose Nothing
       BS.putStr (Y.encode pc)
 
--- | Per-repo runtime-artifact directory. Everything we write — the
--- process-compose UDS, its log file, the @git worktree@ snapshot — lives
--- here so the user gitignores @\/.ci\/@ once and forgets about it.
-ensureRunDir :: IO FilePath
+-- | Create @\$PWD\/.ci\/@ (if missing) and return the canonical sub-paths.
+-- Everything we write at runtime lives here so the user gitignores
+-- @\/.ci\/@ once and forgets about it.
+ensureRunDir :: IO RunDir
 ensureRunDir = do
   cwd <- getCurrentDirectory
   let dir = cwd </> ".ci"
   createDirectoryIfMissing True dir
-  pure dir
+  pure RunDir {snap = dir </> "snap", sock = dir </> "pc.sock", pcLog = dir </> "pc.log"}
 
 -- | Local mode: live working tree, no observer, no status posts. The
--- process-compose log is redirected to @.ci\/pc.log@ so even local runs
--- don't leak into @\$TMPDIR@.
-runLocal :: FilePath -> [String] -> IO ()
-runLocal runDir extraArgs = do
+-- process-compose log goes to @.ci\/pc.log@ so even local runs don't leak
+-- into @\$TMPDIR@.
+runLocal :: RunDir -> [String] -> IO ()
+runLocal dirs extraArgs = do
   pc <- buildProcessCompose Nothing
-  runPipeline NoServer (runDir </> "pc.log") extraArgs pc >>= exitWith
+  runPipeline NoServer dirs.pcLog extraArgs pc >>= exitWith
 
 -- | Strict mode: clean-tree refuse → resolve coords + SHA → snapshot HEAD
 -- via @git worktree@ at @.ci\/snap@ → start process-compose with its API
 -- on @.ci\/pc.sock@ → subscribe to state events and post commit statuses
 -- concurrently with the pipeline run.
-runStrict :: FilePath -> [String] -> IO ()
-runStrict runDir extraArgs = do
+runStrict :: RunDir -> [String] -> IO ()
+runStrict dirs extraArgs = do
   dieOnLeft =<< ensureCleanTree
   coords <- dieOnLeft =<< resolveRepoCoords
   sha <- dieOnLeft =<< resolveSha
-  let snapPath = runDir </> "snap"
-      sockPath = runDir </> "pc.sock"
-      logPath = runDir </> "pc.log"
-  withSnapshotWorktree snapPath $ do
-    pc <- buildProcessCompose (Just snapPath)
-    withAsync (runObserver sockPath [postConsumer coords sha]) $ \obs -> do
+  withSnapshotWorktree dirs.snap $ do
+    pc <- buildProcessCompose (Just dirs.snap)
+    withAsync (runObserver dirs.sock [postConsumer coords sha]) $ \obs -> do
       -- 'link' propagates an observer crash to this thread (so an
       -- observer-side exception aborts the pipeline rather than silently
       -- proceeding with no status posts). 'waitCatch' after the pipeline
@@ -109,7 +115,7 @@ runStrict runDir extraArgs = do
       -- WS closes on its own shutdown, so this is bounded by the close
       -- handshake.
       link obs
-      ec <- runPipeline (UnixSocket sockPath) logPath extraArgs pc
+      ec <- runPipeline (UnixSocket dirs.sock) dirs.pcLog extraArgs pc
       _ <- waitCatch obs
       exitWith ec
 
