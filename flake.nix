@@ -15,7 +15,7 @@
             projectRoot = self;
             modules = [{
               devShell.mkShellArgs.nativeBuildInputs = [ pkgs.just pkgs.process-compose ];
-              settings.ci.extraBuildTools = [ pkgs.just ];
+              settings.ci.extraBuildTools = [ pkgs.just pkgs.process-compose ];
             }];
           };
         in

@@ -13,12 +13,14 @@ executable ci
     other-modules:    CI.Graph
                       CI.Justfile
                       CI.ProcessCompose
+                      CI.Runner
     build-depends:
         , aeson
         , algebraic-graphs
         , base
         , bytestring
         , containers
+        , optparse-applicative
         , process
         , text
         , text-display
