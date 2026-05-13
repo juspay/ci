@@ -10,7 +10,8 @@ common warnings
 executable ci
     import:           warnings
     main-is:          Main.hs
-    other-modules:    CI.Graph
+    other-modules:    CI.Entrypoint
+                      CI.Graph
                       CI.Justfile
                       CI.ProcessCompose
                       CI.Runner

@@ -8,8 +8,9 @@
 --   * @dump-yaml@: emit the @process-compose@ YAML on stdout.
 module Main where
 
+import CI.Entrypoint (findEntrypoint)
 import CI.Graph (buildExecutionGraph, reachableSubgraph)
-import CI.Justfile (fetchDump, findEntrypoint)
+import CI.Justfile (fetchDump)
 import CI.ProcessCompose (ProcessCompose, toProcessCompose)
 import CI.Runner (runPipeline)
 import qualified Data.ByteString as BS
