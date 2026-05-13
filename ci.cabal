@@ -14,6 +14,7 @@ executable ci
                       CI.Entrypoint
                       CI.Graph
                       CI.Justfile
+                      CI.Observer
                       CI.ProcessCompose
                       CI.RecipeStep
                       CI.Runner
@@ -26,11 +27,13 @@ executable ci
         , containers
         , directory
         , filepath
+        , network
         , optparse-applicative
         , process
         , text
         , text-display
         , time
+        , websockets
         , which
         , yaml
     hs-source-dirs:   src
