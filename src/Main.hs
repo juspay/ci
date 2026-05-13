@@ -25,7 +25,7 @@ import CI.Resolve (RepoCoords, Sha, ensureCleanTree, resolveRepoCoords, resolveS
 import CI.Entrypoint (findEntrypoint)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (RecipeName, fetchDump, justBin)
-import CI.Observer (ProcessState (..), ProcessStateEvent (..), runObserver)
+import CI.Observer (ProcessState (..), ProcessStatus (..), runObserver)
 import CI.ProcessCompose (ProcessCompose, toProcessCompose)
 import CI.Runner (ServerMode (..), runPipeline)
 import CI.Snapshot (withSnapshotWorktree)
@@ -114,21 +114,21 @@ runStrict runDir extraArgs = do
       _ <- waitCatch obs
       exitWith ec
 
--- | Translate a single 'ProcessStateEvent' into at most one 'postStatus'
--- call, under the @ci/\<recipe\>@ context. Non-terminal states without a
--- 'CommitStatus' analogue (Pending, Launching, …) drop on the floor.
-postConsumer :: RepoCoords -> Sha -> ProcessStateEvent -> IO ()
-postConsumer coords sha (ProcessStateEvent _ ps) =
+-- | Translate a single 'ProcessState' into at most one 'postStatus' call,
+-- under the @ci/\<recipe\>@ context. Non-terminal states without a
+-- 'CommitStatus' analogue drop on the floor via 'Nothing'.
+postConsumer :: RepoCoords -> Sha -> ProcessState -> IO ()
+postConsumer coords sha ps =
   for_ (psToCommitStatus ps) (postStatus coords sha (mkContext (name ps)))
 
 psToCommitStatus :: ProcessState -> Maybe CommitStatus
 psToCommitStatus ps = case (status ps, exit_code ps) of
-  ("Running", _) -> Just Pending
-  ("Completed", 0) -> Just Success
-  ("Completed", _) -> Just Failure
-  ("Skipped", _) -> Just Error
-  ("Error", _) -> Just Error
-  _ -> Nothing
+  (PsRunning, _) -> Just Pending
+  (PsCompleted, 0) -> Just Success
+  (PsCompleted, _) -> Just Failure
+  (PsSkipped, _) -> Just Error
+  (PsErrored, _) -> Just Error
+  (PsOther _, _) -> Nothing
 
 parserInfo :: ParserInfo Command
 parserInfo =
