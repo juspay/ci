@@ -3,22 +3,23 @@
 {-# LANGUAGE TemplateHaskell #-}
 
 -- | Per-recipe lifecycle wrapper. Each process-compose vertex invokes this
--- via the @run-step@ subcommand; the wrapper posts a "started" signal, runs
+-- via the @run-step@ subcommand; the wrapper emits 'Running', spawns
 -- @just --no-deps <name>@ with inherited stdio (so its output streams through
--- process-compose's logger), then posts a terminal signal carrying the
--- recipe's exit code.
+-- process-compose's logger), then emits the terminal 'RecipeStatus' derived
+-- from the recipe's exit code.
 --
--- The reporting side-effect is injected as a 'CommitStatus'-consuming
--- callback so the module does not depend on 'CI.GitHubStatus'. Dev runs
--- pass a no-op poster; CI runs pass one that calls @gh api@.
+-- The reporting side-effect is injected as a 'RecipeStatus'-consuming
+-- callback so this module owns the lifecycle vocabulary alone and does not
+-- depend on any specific reporting backend. Dev runs pass a no-op handler;
+-- CI runs pass one that ultimately calls @gh api@.
 --
 -- Phase 1 only: a recipe that is never spawned (because its dep failed) gets
 -- no terminal status. Phase 2 will close that gap, at which point this
 -- module is expected to be replaced by a central observer subscribing to
 -- process-compose's @/process/states/ws@ stream.
 module CI.RecipeStep
-  ( CommitStatus (..),
-    toCommitStatus,
+  ( RecipeStatus (..),
+    toRecipeStatus,
     runStep,
   )
 where
@@ -33,21 +34,21 @@ import System.Which (staticWhich)
 justBin :: FilePath
 justBin = $(staticWhich "just")
 
--- | The four GitHub commit-status states. 'Error' is included for fidelity
--- with the wire format even though 'toCommitStatus' never produces it —
--- recipe exit codes only distinguish success from failure.
-data CommitStatus = Pending | Success | Failure | Error
+-- | The three observable states of a recipe execution. The lifecycle does not
+-- model an out-of-band "error" (infra failure) — that vocabulary belongs to
+-- the reporter layer if anywhere.
+data RecipeStatus = Running | Succeeded | Failed
   deriving stock (Show, Eq)
 
-toCommitStatus :: ExitCode -> CommitStatus
-toCommitStatus ExitSuccess = Success
-toCommitStatus (ExitFailure _) = Failure
+toRecipeStatus :: ExitCode -> RecipeStatus
+toRecipeStatus ExitSuccess = Succeeded
+toRecipeStatus (ExitFailure _) = Failed
 
-runStep :: (CommitStatus -> IO ()) -> RecipeName -> IO ExitCode
-runStep postStatus name = do
-  postStatus Pending
+runStep :: (RecipeStatus -> IO ()) -> RecipeName -> IO ExitCode
+runStep onStatus name = do
+  onStatus Running
   exit <- spawnRecipe name
-  postStatus (toCommitStatus exit)
+  onStatus (toRecipeStatus exit)
   pure exit
 
 spawnRecipe :: RecipeName -> IO ExitCode

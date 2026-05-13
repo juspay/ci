@@ -12,11 +12,11 @@
 module Main where
 
 import CI.Entrypoint (findEntrypoint)
-import CI.CommitStatus (Context (..), postStatus, resolveRepoCoords, resolveSha)
+import CI.CommitStatus (Context (..), postStatus, resolveRepoCoords, resolveSha, toCommitStatus)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (RecipeName, fetchDump)
 import CI.ProcessCompose (Process (..), ProcessCompose (..), toProcessCompose)
-import CI.RecipeStep (CommitStatus, runStep)
+import CI.RecipeStep (RecipeStatus, runStep)
 import CI.Runner (runPipeline)
 import Control.Applicative (many, (<|>))
 import qualified Data.ByteString as BS
@@ -105,7 +105,7 @@ wrapForCI self (ProcessCompose ps) =
 -- @ci/\<recipe\>@ context; otherwise return a no-op so dev runs stay silent.
 -- The env-driven branch is the only feature gate in the pipeline; the YAML
 -- always emits @run-step@.
-buildPoster :: RecipeName -> IO (CommitStatus -> IO ())
+buildPoster :: RecipeName -> IO (RecipeStatus -> IO ())
 buildPoster name = do
   enabled <- (== Just "true") <$> lookupEnv "CI"
   if not enabled
@@ -114,7 +114,7 @@ buildPoster name = do
       coords <- resolveRepoCoords
       sha <- resolveSha
       let ctx = Context ("ci/" <> display name)
-      pure (postStatus coords sha ctx)
+      pure (postStatus coords sha ctx . toCommitStatus)
 
 dieOnLeft :: Display e => Either e a -> IO a
 dieOnLeft = either (die . T.unpack . display) pure

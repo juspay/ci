@@ -4,13 +4,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
--- | Adapt a recipe's lifecycle 'CommitStatus' onto the GitHub commit-status
+-- | Adapt a recipe's lifecycle 'RecipeStatus' onto the GitHub commit-status
 -- wire format via the @gh@ CLI. Repo coordinates and HEAD SHA are resolved
 -- once at startup; 'postStatus' then posts a single REST call per
 -- transition. Failures are logged to stderr and swallowed — a flaky API
 -- call must not poison the recipe's own exit code.
 module CI.CommitStatus
-  ( -- * Resolved coordinates
+  ( -- * Wire vocabulary
+    CommitStatus (..),
+    toCommitStatus,
+
+    -- * Resolved coordinates
     RepoCoords (..),
     Sha (..),
     Context (..),
@@ -22,7 +26,7 @@ module CI.CommitStatus
   )
 where
 
-import CI.RecipeStep (CommitStatus (..))
+import CI.RecipeStep (RecipeStatus (..))
 import Data.String (IsString)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -30,6 +34,17 @@ import System.Exit (ExitCode (..), die)
 import System.IO (hPutStrLn, stderr)
 import System.Process (readProcessWithExitCode)
 import System.Which (staticWhich)
+
+-- | The four GitHub commit-status states. 'Error' is reserved for the wire
+-- format's out-of-band-failure slot; the recipe lifecycle never produces it
+-- (see 'toCommitStatus').
+data CommitStatus = Pending | Success | Failure | Error
+  deriving stock (Show, Eq)
+
+toCommitStatus :: RecipeStatus -> CommitStatus
+toCommitStatus Running = Pending
+toCommitStatus Succeeded = Success
+toCommitStatus Failed = Failure
 
 ghBin :: FilePath
 ghBin = $(staticWhich "gh")
