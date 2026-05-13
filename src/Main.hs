@@ -12,12 +12,13 @@
 module Main where
 
 import CI.Entrypoint (findEntrypoint)
-import CI.CommitStatus (buildPoster, populatePosterEnv)
+import CI.CommitStatus (buildPoster, ensureCleanTree, populatePosterEnv)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (RecipeName, fetchDump)
 import CI.ProcessCompose (ProcessCompose, toProcessCompose)
 import CI.RecipeStep (runStep)
 import CI.Runner (runPipeline)
+import CI.Snapshot (withSnapshotWorktree)
 import Control.Applicative (many, (<|>))
 import qualified Data.ByteString as BS
 import Data.String (fromString)
@@ -39,7 +40,6 @@ import Options.Applicative
     (<**>),
   )
 import qualified Options.Applicative as O (command)
-import Control.Monad (when)
 import System.Environment (getExecutablePath, lookupEnv)
 import System.Exit (die, exitWith)
 
@@ -54,9 +54,16 @@ main = do
   case cmd of
     Run extraArgs -> do
       strict <- (== Just "true") <$> lookupEnv "CI"
-      when strict $ dieOnLeft =<< populatePosterEnv
-      pc <- buildProcessCompose Nothing =<< runStepCommand
-      runPipeline extraArgs pc >>= exitWith
+      if strict
+        then do
+          dieOnLeft =<< ensureCleanTree
+          dieOnLeft =<< populatePosterEnv
+          withSnapshotWorktree $ \snap -> do
+            pc <- buildProcessCompose (Just snap) =<< runStepCommand
+            runPipeline extraArgs pc >>= exitWith
+        else do
+          pc <- buildProcessCompose Nothing =<< runStepCommand
+          runPipeline extraArgs pc >>= exitWith
     DumpYaml -> do
       pc <- buildProcessCompose Nothing =<< runStepCommand
       BS.putStr (Y.encode pc)
