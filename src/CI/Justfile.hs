@@ -250,10 +250,21 @@ modulePath (RecipeName np) = case T.breakOnEnd "::" np of
   (prefix, _) -> T.dropEnd 2 prefix
 
 -- | Resolve a single 'Dep' against the module path of the recipe that
--- owns it. Two-branch policy: @::@-bearing deps are trusted as-is;
--- bare deps are qualified with the owner's module path. Lifted out of
--- 'qualifyDeps' so the rule stays one named decision rather than an
--- inline branch in a traversal.
+-- owns it. Three branches:
+--
+--   * @::@-bearing deps are trusted verbatim — just emits already-
+--     qualified deps in source form when the source crosses module
+--     boundaries.
+--
+--   * An empty owner module path means the dep is on a top-level
+--     recipe, so there's no module to prefix with and the dep is
+--     already in its final form.
+--
+--   * Otherwise the dep is a bare sibling reference inside a submodule,
+--     and gets prefixed with the owner's module path.
+--
+-- Lifted out of 'qualifyDeps' so the rule stays one named decision
+-- rather than an inline branch in a traversal.
 qualifyDep :: Text -> Dep -> Dep
 qualifyDep ownerMod d
   | "::" `T.isInfixOf` rawName = d
