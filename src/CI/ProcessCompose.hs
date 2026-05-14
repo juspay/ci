@@ -19,7 +19,6 @@ module CI.ProcessCompose
 
     -- * Invocation
     UpInvocation (..),
-    ServerMode (..),
     runProcessCompose,
   )
 where
@@ -143,21 +142,14 @@ toProcessCompose workingDir mkCommand g =
 processNames :: ProcessCompose -> [RecipeName]
 processNames (ProcessCompose ps) = Map.keys ps
 
--- | Selects how process-compose's HTTP API surface is exposed (or not).
--- 'NoServer' suppresses the API entirely — used for local-mode dev runs
--- where nothing observes the state. 'UnixSocket' binds the API to a UDS
--- at the given path — used in strict mode where
--- 'CI.ProcessCompose.Events.subscribeStates' attaches to the
--- state-event stream over that socket.
-data ServerMode
-  = NoServer
-  | UnixSocket FilePath
-
 -- | All inputs that shape a @process-compose up@ invocation. The YAML
 -- config itself goes on stdin separately (it's typically too big for an
--- argv); everything else flag-shaped lives here.
+-- argv); everything else flag-shaped lives here. Process-compose always
+-- binds its API to a UDS at @sockPath@ — that's both the
+-- 'CI.ProcessCompose.Events.subscribeStates' attachment point and the
+-- de-facto mutex for "is a ci run in progress in this checkout."
 data UpInvocation = UpInvocation
-  { server :: ServerMode,
+  { sockPath :: FilePath,
     logFile :: FilePath,
     -- | Caller-supplied extra args appended verbatim after the canned
     -- baseline; used for @--log-level debug@ and similar overrides.
@@ -170,10 +162,7 @@ data UpInvocation = UpInvocation
 -- one caller ('runProcessCompose') and it never wants TUI.
 toUpArgs :: UpInvocation -> [String]
 toUpArgs up =
-  ["up", "-f", "/dev/stdin", "-t=false", "-L", up.logFile] <> serverArgs up.server <> up.extraArgs
-  where
-    serverArgs NoServer = ["--no-server"]
-    serverArgs (UnixSocket path) = ["-U", "-u", path]
+  ["up", "-f", "/dev/stdin", "-t=false", "-L", up.logFile, "-U", "-u", up.sockPath] <> up.extraArgs
 
 -- | Spawn @process-compose up@ from the 'UpInvocation', encode the
 -- 'ProcessCompose' as YAML on stdin, and forward the subprocess's exit

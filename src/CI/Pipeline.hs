@@ -20,7 +20,7 @@ import CI.Gh (viewRepo)
 import CI.Git (ensureCleanTree, resolveSha, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (fetchDump, recipeCommand)
-import CI.ProcessCompose (ProcessCompose, ServerMode (..), UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
+import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (subscribeStates)
 import Control.Concurrent.Async (link, wait, withAsync)
 import qualified Data.Text as T
@@ -29,9 +29,10 @@ import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.Exit (die, exitWith)
 import System.FilePath ((</>))
 
--- | The three artifact paths under @\$PWD\/.ci\/@. Built once at the top of
--- a run so 'runLocal' and 'runStrict' both reference the same convention
--- instead of hand-rolling @runDir \<\/\> "pc.log"@ at each call site.
+-- | The runtime artifact paths under @\$PWD\/.ci\/@. Built once at the top
+-- of a run so 'runLocal' and 'runStrict' both reference the same
+-- convention instead of hand-rolling @runDir \<\/\> "pc.log"@ at each
+-- call site.
 data RunDir = RunDir
   { worktreePath :: FilePath,
     sock :: FilePath,
@@ -46,15 +47,22 @@ ensureRunDir = do
   cwd <- getCurrentDirectory
   let dir = cwd </> ".ci"
   createDirectoryIfMissing True dir
-  pure RunDir {worktreePath = dir </> "worktree", sock = dir </> "pc.sock", pcLog = dir </> "pc.log"}
+  pure
+    RunDir
+      { worktreePath = dir </> "worktree",
+        sock = dir </> "pc.sock",
+        pcLog = dir </> "pc.log"
+      }
 
 -- | Local mode: live working tree, no observer, no status posts. The
 -- process-compose log goes to @.ci\/pc.log@ so even local runs don't leak
--- into @\$TMPDIR@.
+-- into @\$TMPDIR@. Process-compose binds @.ci\/pc.sock@ in both modes
+-- so the API surface is available for future consumers (e.g. an MCP
+-- server).
 runLocal :: RunDir -> [String] -> IO ()
 runLocal dirs extra = do
   pc <- buildProcessCompose Nothing
-  runProcessCompose (UpInvocation NoServer dirs.pcLog extra) pc >>= exitWith
+  runProcessCompose (UpInvocation dirs.sock dirs.pcLog extra) pc >>= exitWith
 
 -- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
 -- via @git worktree@ at @.ci\/worktree@ → start process-compose with its
@@ -73,7 +81,7 @@ runStrict dirs extra = do
       -- past 'wait' below is a clean WebSocket close (process-compose
       -- shutdown closes the WS on its own).
       link obs
-      ec <- runProcessCompose (UpInvocation (UnixSocket dirs.sock) dirs.pcLog extra) pc
+      ec <- runProcessCompose (UpInvocation dirs.sock dirs.pcLog extra) pc
       wait obs
       exitWith ec
 
