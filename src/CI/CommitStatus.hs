@@ -117,16 +117,19 @@ withLogPath label logPath = label <> ": " <> T.pack logPath
 logPathFor :: Display a => FilePath -> a -> FilePath
 logPathFor logDir recipe = logDir </> T.unpack (display recipe) <> ".log"
 
--- | Compose the per-run log directory: @.ci\/\<sha\>\/@. Returns a
--- repo-relative path so the @description@ field on a GitHub commit
--- status embeds something a contributor can paste straight into their
--- own checkout — an absolute path would leak the runner's filesystem
--- layout into the public PR. Lives alongside 'logPathFor' so the full
--- @.ci\/\<sha\>\/\<recipe\>.log@ convention (directory + filename) is
--- owned by one module — a change to the SHA-keying strategy (short
--- sha, sha+timestamp, content hash) edits one file rather than two.
+-- | Compose the per-run log directory: @.ci\/\<short-sha\>\/@. Returns
+-- a repo-relative path with a 7-char abbreviated SHA so the
+-- @description@ field on a GitHub commit status stays readable inside
+-- its 140-char budget (a 40-char hex blob blew most of it on one
+-- field). Repo-relative so the path is portable across machines: a
+-- contributor seeing the status can paste it straight into their own
+-- checkout instead of looking at the runner's filesystem layout.
+-- Lives alongside 'logPathFor' so the full @.ci\/\<short-sha\>\/\<recipe\>.log@
+-- convention is owned by one module.
 logDirFor :: Sha -> FilePath
-logDirFor sha = ".ci" </> T.unpack (display sha)
+logDirFor sha = ".ci" </> T.unpack (T.take shortShaLen (display sha))
+  where
+    shortShaLen = 7
 
 psToCommitStatus :: ProcessState -> Maybe CommitStatus
 psToCommitStatus ps = case (ps.status, ps.exit_code) of
