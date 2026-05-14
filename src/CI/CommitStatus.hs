@@ -8,18 +8,18 @@
 -- encoding of each state, and the form-field names are gh-API details
 -- owned by "CI.Gh". Multi-platform may eventually require a
 -- @\<system\>\/\<recipe\>@ shape (see [#14](https://github.com/juspay/ci/issues/14)).
-module CI.CommitStatus (postStatusFor, seedPending, logDirFor, logPathFor) where
+module CI.CommitStatus (postStatusFor, seedPending) where
 
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
 import CI.Git (Sha)
 import CI.Justfile (RecipeName)
+import CI.LogPath (logPathFor)
 import CI.ProcessCompose.Events (ProcessState (..), ProcessStatus (..))
 import Control.Concurrent.Async (forConcurrently_)
 import Data.Foldable (for_)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
-import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
 
 -- | Given a process-compose state event, post the corresponding GitHub
@@ -110,26 +110,6 @@ seedDescription = withLogPath "Queued"
 -- format across its lifecycle.
 withLogPath :: Text -> FilePath -> Text
 withLogPath label logPath = label <> ": " <> T.pack logPath
-
--- | Compose @\<logDir\>\/\<recipe\>.log@. The single home for the
--- per-recipe log filename convention; the matching path on the YAML
--- side lives in 'CI.Pipeline.mkLogLocation'.
-logPathFor :: Display a => FilePath -> a -> FilePath
-logPathFor logDir recipe = logDir </> T.unpack (display recipe) <> ".log"
-
--- | Compose the per-run log directory: @.ci\/\<short-sha\>\/@. Returns
--- a repo-relative path with a 7-char abbreviated SHA so the
--- @description@ field on a GitHub commit status stays readable inside
--- its 140-char budget (a 40-char hex blob blew most of it on one
--- field). Repo-relative so the path is portable across machines: a
--- contributor seeing the status can paste it straight into their own
--- checkout instead of looking at the runner's filesystem layout.
--- Lives alongside 'logPathFor' so the full @.ci\/\<short-sha\>\/\<recipe\>.log@
--- convention is owned by one module.
-logDirFor :: Sha -> FilePath
-logDirFor sha = ".ci" </> T.unpack (T.take shortShaLen $ display sha)
-  where
-    shortShaLen = 7
 
 psToCommitStatus :: ProcessState -> Maybe CommitStatus
 psToCommitStatus ps = case (ps.status, ps.exit_code) of

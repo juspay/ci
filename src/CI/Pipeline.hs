@@ -15,12 +15,13 @@ module CI.Pipeline
   )
 where
 
-import CI.CommitStatus (logDirFor, logPathFor, postStatusFor, seedPending)
+import CI.CommitStatus (postStatusFor, seedPending)
 import CI.Root (findRoot)
 import CI.Gh (viewRepo)
 import CI.Git (ensureCleanTree, resolveSha, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (RecipeName, fetchDump, recipeCommand)
+import CI.LogPath (logDirFor, logPathFor)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (subscribeStates)
 import Control.Concurrent.Async (link, wait, withAsync)
@@ -122,7 +123,7 @@ buildProcessCompose mode = do
 
 -- | Per-recipe log file path: @\<logDir\>\/\<recipe\>.log@ when a log
 -- directory is configured, 'Nothing' otherwise. The filename convention
--- itself ('CI.CommitStatus.logPathFor') is shared with the status-post
+-- itself ('CI.LogPath.logPathFor') is shared with the status-post
 -- side so the on-disk file and the path in the GitHub description
 -- cannot drift.
 mkLogLocation :: Maybe FilePath -> RecipeName -> Maybe FilePath
