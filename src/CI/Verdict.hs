@@ -30,8 +30,9 @@ module CI.Verdict (
 )
 where
 
-import CI.Node (NodeId, parseNodeId)
+import CI.Node (NodeId)
 import CI.ProcessCompose.Events (ProcessState (..), TerminalStatus (..), psToTerminalStatus)
+import Data.Foldable (for_)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -77,29 +78,35 @@ newOutcomes :: [NodeId] -> IO Outcomes
 newOutcomes nodes =
     Outcomes <$> newIORef (Map.fromList [(n, Unreported) | n <- nodes])
 
-{- | Fold one 'ProcessState' event into the outcome map. Routes through
-'psToTerminalStatus' — the project-wide ground-truth classifier of
-process-compose's terminal states — and adopts its outcome under
-the verdict's own vocabulary. Non-terminal events ('PsRunning',
-'PsOther') are dropped; the seed 'Unreported' stays in place until
-a real terminal event arrives.
+{- | Fold one 'ProcessState' event for an already-parsed 'NodeId' into
+the outcome map. Routes through 'psToTerminalStatus' — the
+project-wide ground-truth classifier of process-compose's terminal
+states — and adopts its outcome under the verdict's own
+vocabulary. Non-terminal events ('PsRunning', 'PsOther') are
+dropped; the seed 'Unreported' stays in place until a real
+terminal event arrives.
+
+The 'NodeId' is parsed once at the composition site in
+'CI.Pipeline'; this module no longer does its own 'parseNodeId'
+call. That keeps the two consumers of the state stream ('CI.CommitStatus'
+and this one) from independently deciding whether to drop an event
+with an unparseable name — there is one parse, one drop decision,
+and both downstreams agree by construction.
 
 Safe to call from any thread; the underlying 'atomicModifyIORef''
 serializes concurrent writes. In practice only the observer thread
 writes.
 -}
-recordOutcome :: Outcomes -> ProcessState -> IO ()
-recordOutcome (Outcomes ref) ps =
-    case (parseNodeId ps.name, terminalToOutcome <$> psToTerminalStatus ps) of
-        (Just node, Just o) ->
-            -- 'Map.adjust' silently drops events for nodes the seed doesn't
-            -- already know about. That's the right policy: every legitimate
-            -- node was seeded by 'newOutcomes', so an unknown key means pc
-            -- emitted a state for something we didn't ask it to schedule
-            -- (which shouldn't happen, and adding ghost entries to the map
-            -- would only confuse the summary).
-            atomicModifyIORef' ref (\m -> (Map.adjust (const o) node m, ()))
-        _ -> pure ()
+recordOutcome :: Outcomes -> NodeId -> ProcessState -> IO ()
+recordOutcome (Outcomes ref) node ps =
+    for_ (terminalToOutcome <$> psToTerminalStatus ps) $ \o ->
+        -- 'Map.adjust' silently drops events for nodes the seed doesn't
+        -- already know about. That's the right policy: every legitimate
+        -- node was seeded by 'newOutcomes', so an unknown key means pc
+        -- emitted a state for something we didn't ask it to schedule
+        -- (which shouldn't happen, and adding ghost entries to the map
+        -- would only confuse the summary).
+        atomicModifyIORef' ref (\m -> (Map.adjust (const o) node m, ()))
 
 -- | Verdict-side relabeling of the three terminal classifications.
 terminalToOutcome :: TerminalStatus -> RecipeOutcome

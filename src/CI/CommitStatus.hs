@@ -14,7 +14,7 @@ module CI.CommitStatus (postStatusFor, seedPending, terminalToCommitStatus) wher
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
 import CI.Git (Sha)
 import CI.LogPath (logPathFor)
-import CI.Node (NodeId, parseNodeId)
+import CI.Node (NodeId)
 import CI.ProcessCompose.Events (ProcessState (..), ProcessStatus (..), TerminalStatus (..), psToTerminalStatus)
 import Control.Concurrent.Async (forConcurrently_)
 import Data.Foldable (for_)
@@ -23,12 +23,14 @@ import qualified Data.Text as T
 import Data.Text.Display (display)
 import System.IO (hPutStrLn, stderr)
 
-{- | Given a process-compose state event, post the corresponding GitHub
-commit status under the @\<recipe\>\@\<platform\>@ context.
-Non-terminal states ('PsOther') drop on the floor. Events whose
-@name@ doesn't parse as a 'NodeId' also drop — that means pc emitted
-a state for a process we didn't schedule, and adding ghost entries
-to the status surface would only confuse the GH UI.
+{- | Given a process-compose state event for an already-parsed
+'NodeId', post the corresponding GitHub commit status under the
+@\<recipe\>\@\<platform\>@ context. Non-terminal states ('PsOther')
+drop on the floor.
+
+The caller ('CI.Pipeline') has the single 'parseNodeId' site, so
+"is this event for a node we scheduled?" is decided once, not
+re-decided here and again in 'CI.Verdict.recordOutcome'.
 
 The status @description@ embeds the path to the node's per-run log
 (@\<logDir\>\/\<platform\>\/\<recipe\>.log@) so a red check in the
@@ -50,11 +52,10 @@ Posting failures are logged to stderr with a @gh:@ prefix and
 swallowed — the node's exit code must not depend on whether a
 status post succeeded.
 -}
-postStatusFor :: Repo -> Sha -> FilePath -> ProcessState -> IO ()
-postStatusFor repo sha logDir ps =
-    for_ (parseNodeId ps.name) $ \node ->
-        for_ (psToCommitStatus ps) $ \cs ->
-            postOne repo sha node cs $ describe cs $ logPathFor logDir node
+postStatusFor :: Repo -> Sha -> FilePath -> NodeId -> ProcessState -> IO ()
+postStatusFor repo sha logDir node ps =
+    for_ (psToCommitStatus ps) $ \cs ->
+        postOne repo sha node cs $ describe cs $ logPathFor logDir node
 
 {- | Pre-seed every node with a 'Pending' commit status at startup —
 one parallel @gh api@ POST per node, all joined before this returns.

@@ -24,15 +24,16 @@ import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Hosts (Hosts, hostsPath, loadHosts, lookupHost, resolveHost)
 import CI.Justfile (Attribute (..), Recipe (..), RecipeName, fetchDump)
 import CI.LogPath (logDirFor, logPathFor, platformDir)
-import CI.Node (NodeId (..))
+import CI.Node (NodeId (..), parseNodeId)
 import CI.Platform (Platform, localPlatform, osToPlatform)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
-import CI.ProcessCompose.Events (ProcessState, subscribeStates)
+import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
 import CI.Root (findRoot)
 import CI.Transport (Transport (..), commandFor)
 import CI.Verdict (exitWithVerdict, newOutcomes, recordOutcome)
 import Control.Concurrent.Async (link, wait, withAsync)
 import Control.Monad (foldM, void)
+import Data.Foldable (for_)
 import Data.List (nub)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -87,7 +88,8 @@ runLocal :: RunDir -> [String] -> IO ()
 runLocal dirs passthrough = do
     pc <- buildProcessCompose LocalRun
     outcomes <- newOutcomes (processNames pc)
-    withObserver dirs.sock (recordOutcome outcomes) $
+    let onState ps = forNode ps $ \node -> recordOutcome outcomes node ps
+    withObserver dirs.sock onState $
         void $
             runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
     exitWithVerdict outcomes
@@ -131,7 +133,9 @@ runStrict dirs passthrough = do
         createPlatformDirs logDir nodes
         seedPending repo sha logDir nodes
         outcomes <- newOutcomes nodes
-        let onState ps = postStatusFor repo sha logDir ps >> recordOutcome outcomes ps
+        let onState ps = forNode ps $ \node ->
+                postStatusFor repo sha logDir node ps
+                    >> recordOutcome outcomes node ps
         withObserver dirs.sock onState $
             void $
                 runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
@@ -146,6 +150,16 @@ platform whose subdir doesn't exist fails the spawn.
 createPlatformDirs :: FilePath -> [NodeId] -> IO ()
 createPlatformDirs logDir nodes =
     mapM_ (createDirectoryIfMissing True . platformDir logDir) (nub [n.platform | n <- nodes])
+
+{- | The single 'parseNodeId' site in the runtime path. Both observers
+('postStatusFor' and 'recordOutcome') consume the same parsed
+'NodeId', so "is this event for a node we scheduled?" is decided
+once instead of being re-decided in each downstream module. If
+'parseNodeId' rejects the event name, the action is silently
+dropped — same policy both sides had locally, now unified.
+-}
+forNode :: ProcessState -> (NodeId -> IO ()) -> IO ()
+forNode ps action = for_ (parseNodeId ps.name) action
 
 {- | Bracket @body@ between a 'subscribeStates' subscription on @sock@
 and a clean @wait@ on it: spawn the observer, 'link' so its crash
