@@ -11,7 +11,7 @@ nix develop -c cabal build
 ## Test command
 
 ```sh
-just run-check
+just ci run-check
 ```
 
 ## CI command
