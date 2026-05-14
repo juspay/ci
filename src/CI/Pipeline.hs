@@ -33,7 +33,7 @@ import System.FilePath ((</>))
 -- a run so 'runLocal' and 'runStrict' both reference the same convention
 -- instead of hand-rolling @runDir \<\/\> "pc.log"@ at each call site.
 data RunDir = RunDir
-  { snap :: FilePath,
+  { worktreePath :: FilePath,
     sock :: FilePath,
     pcLog :: FilePath
   }
@@ -46,7 +46,7 @@ ensureRunDir = do
   cwd <- getCurrentDirectory
   let dir = cwd </> ".ci"
   createDirectoryIfMissing True dir
-  pure RunDir {snap = dir </> "snap", sock = dir </> "pc.sock", pcLog = dir </> "pc.log"}
+  pure RunDir {worktreePath = dir </> "worktree", sock = dir </> "pc.sock", pcLog = dir </> "pc.log"}
 
 -- | Local mode: live working tree, no observer, no status posts. The
 -- process-compose log goes to @.ci\/pc.log@ so even local runs don't leak
@@ -57,16 +57,16 @@ runLocal dirs extra = do
   runProcessCompose (UpInvocation NoServer dirs.pcLog extra) pc >>= exitWith
 
 -- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
--- via @git worktree@ at @.ci\/snap@ → start process-compose with its API
--- on @.ci\/pc.sock@ → subscribe to state events and post commit statuses
--- concurrently with the pipeline run.
+-- via @git worktree@ at @.ci\/worktree@ → start process-compose with its
+-- API on @.ci\/pc.sock@ → subscribe to state events and post commit
+-- statuses concurrently with the pipeline run.
 runStrict :: RunDir -> [String] -> IO ()
 runStrict dirs extra = do
   dieOnLeft =<< ensureCleanTree
   repo <- dieOnLeft =<< viewRepo
   sha <- dieOnLeft =<< resolveSha
-  withSnapshotWorktree dirs.snap $ do
-    pc <- buildProcessCompose (Just dirs.snap)
+  withSnapshotWorktree dirs.worktreePath $ do
+    pc <- buildProcessCompose (Just dirs.worktreePath)
     seedPending repo sha (processNames pc)
     withAsync (subscribeStates dirs.sock (postStatusFor repo sha)) $ \obs -> do
       -- 'link' propagates an observer crash to this thread, so any path

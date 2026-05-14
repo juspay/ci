@@ -15,7 +15,7 @@ Gated on the `CI` environment variable:
 | Mode | Trigger | Tree | Status posts | Runtime files |
 |---|---|---|---|---|
 | Local | `CI` unset | live working tree | none | `.ci/pc.log` |
-| Strict | `CI=true` | `git worktree` pinned to HEAD | `ci/<recipe>` per transition | `.ci/pc.log`, `.ci/pc.sock`, `.ci/snap/` |
+| Strict | `CI=true` | `git worktree` pinned to HEAD | `ci/<recipe>` per transition | `.ci/pc.log`, `.ci/pc.sock`, `.ci/worktree/` |
 
 Strict mode refuses to run if the working tree is dirty — the SHA on the green check must exactly match the bytes tested. A central observer subscribes to process-compose's `/process/states/ws` stream over a Unix domain socket and posts a status (`pending`, then `success`/`failure`, or `error` for skipped recipes) for every state transition. All runtime artifacts live under `$PWD/.ci/` (gitignored); two concurrent strict runs in the same checkout collide on the socket and the second fails fast — the intended mutex.
 
