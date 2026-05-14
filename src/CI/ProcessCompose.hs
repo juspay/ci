@@ -79,7 +79,7 @@ data Process = Process
     -- directory before executing 'command'. Used in strict mode to pin
     -- every recipe to an immutable @git worktree@ snapshot of HEAD.
     -- 'Nothing' omits the field from the YAML so dev runs are unchanged.
-    working_dir :: Maybe Text
+    working_dir :: Maybe FilePath
   }
   deriving stock (Generic)
 
@@ -142,7 +142,7 @@ toProcessCompose workingDir mkCommand g =
         { command = mkCommand recipe,
           depends_on = Map.fromSet (const (Dependency ProcessCompletedSuccessfully)) (G.postSet recipe g),
           availability = Availability {restart = ExitOnFailure, exit_on_skipped = True},
-          working_dir = T.pack <$> workingDir
+          working_dir = workingDir
         }
 
 -- | The four process-compose states that map onto a GitHub commit status.

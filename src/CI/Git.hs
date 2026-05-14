@@ -21,6 +21,7 @@ where
 
 import CI.Subprocess (SubprocessError, runSubprocess)
 import Control.Exception (SomeException, bracket_, catch)
+import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display (..))
@@ -45,16 +46,17 @@ newtype Sha = Sha Text
 -- in one place.
 data GitError
   = GitSubprocess SubprocessError
-  | -- | Working tree has uncommitted changes; carries the @git status
-    -- --porcelain@ lines so the user can see what's dirty.
-    DirtyTree [Text]
+  | -- | Working tree has uncommitted changes; carries the dirty paths
+    -- parsed out of @git status --porcelain@ so the user can see what to
+    -- commit or stash.
+    DirtyTree [FilePath]
   deriving stock (Show)
 
 instance Display GitError where
   displayBuilder (GitSubprocess e) = displayBuilder e
   displayBuilder (DirtyTree paths) =
     "working tree is dirty (CI=true requires a clean tree); commit or stash first:\n"
-      <> mconcat ["  " <> displayBuilder p <> "\n" | p <- paths]
+      <> mconcat ["  " <> displayBuilder (T.pack p) <> "\n" | p <- paths]
 
 -- | Refuse the run if the working tree has uncommitted changes. Strict mode
 -- demands the SHA on the green check exactly match the bytes that were
@@ -64,9 +66,15 @@ ensureCleanTree = do
   result <- runSubprocess "git status --porcelain" gitBin ["status", "--porcelain"] ""
   pure $ case result of
     Left e -> Left (GitSubprocess e)
-    Right out -> case filter (not . T.null) (T.lines (T.pack out)) of
+    Right out -> case mapMaybe porcelainPath (lines out) of
       [] -> Right ()
       dirty -> Left (DirtyTree dirty)
+  where
+    -- Each non-empty porcelain line is @XY path@ — two status chars, a
+    -- space, then the path. Drop the three-char prefix to get the path.
+    porcelainPath line = case drop 3 line of
+      "" -> Nothing
+      p -> Just p
 
 -- | Resolve the current HEAD SHA via @git rev-parse HEAD@. Used once at
 -- strict-mode startup so every commit-status post against this run targets

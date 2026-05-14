@@ -124,19 +124,23 @@ data CommitStatusPost = CommitStatusPost
 -- post. The endpoint URL and wire encoding of 'CommitStatus' are gh-API
 -- details owned here; the caller passes only typed values.
 postCommitStatus :: Repo -> Sha -> CommitStatusPost -> IO (Either SubprocessError ())
-postCommitStatus repo sha post = do
-  let endpoint = "/repos/" <> display repo.owner <> "/" <> display repo.name <> "/statuses/" <> display sha
-      args =
-        [ "api",
-          "-X",
-          "POST",
-          T.unpack endpoint,
-          "-f",
-          "state=" <> T.unpack (display post.state),
-          "-f",
-          "context=" <> T.unpack (display post.context),
-          "-f",
-          "description=" <> T.unpack post.description
-        ]
+postCommitStatus repo sha post = apiPost endpoint fields
+  where
+    endpoint = "/repos/" <> display repo.owner <> "/" <> display repo.name <> "/statuses/" <> display sha
+    fields =
+      [ ("state", display post.state),
+        ("context", display post.context),
+        ("description", post.description)
+      ]
+
+-- | Internal helper: @gh api -X POST \<endpoint\> -f k=v ...@ over the
+-- form fields. Not exported — callers use endpoint-specific typed
+-- operations (e.g. 'postCommitStatus'). Reusable by future POST-shaped
+-- operations without re-deriving the argv layout.
+apiPost :: Text -> [(Text, Text)] -> IO (Either SubprocessError ())
+apiPost endpoint fields = do
   result <- runSubprocess ("gh api POST " <> endpoint) ghBin args ""
   pure (() <$ result)
+  where
+    args = ["api", "-X", "POST", T.unpack endpoint] ++ concatMap formArg fields
+    formArg (k, v) = ["-f", T.unpack k <> "=" <> T.unpack v]

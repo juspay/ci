@@ -170,6 +170,37 @@ _Anti-patterns_:
 - `f :: Text -> Map Text Foo -> Either Text Bar` where the three `Text`s mean different things.
 - A `String` filepath, URL, ID, or token threaded as a plain `String`. If it has a domain meaning, it has a newtype.
 
+## use-conventional-base-types
+
+Pick the conventional Haskell base type for each foundational domain before reaching for a newtype. Substituting one for another adds noise — every reader has to guess whether your `Text` is caller content, a URL, a filesystem path, or raw subprocess output — and forces conversions at every IO boundary. Each `T.pack` / `T.unpack` shimming a value between a string-like field and a stdlib function that wants a different shape is the rule violation made visible.
+
+The default mapping:
+
+| Domain                                  | Base type    |
+|-----------------------------------------|--------------|
+| Filesystem paths                        | `FilePath`   |
+| Free-form text (logs, prose, wire str)  | `Text`       |
+| Raw bytes                               | `ByteString` |
+| Subprocess argv                         | `[String]`   |
+| Domain identifiers (IDs, names, refs)   | newtype      |
+
+When a value carries domain meaning, wrap the base type in a newtype — `prefer-newtype-over-string` covers the wrapping rules. This rule is about *which base type* sits inside (and which base type to use when no newtype is warranted yet).
+
+_How to apply_:
+
+- Filesystem paths use `FilePath`. `System.Directory`, `System.Process`, and `System.FilePath` all consume and produce `FilePath`; storing a path as `Text` forces a conversion at every IO call site.
+- Records whose fields encode an external wire format mirror that format's vocabulary at the *value* level, but pick the right Haskell base type at the *field* level: a wire @string@ field that semantically holds a path is `FilePath`, not `Text`. The JSON output is identical either way; the Haskell type is the documentation.
+- Subprocess argv stays `[String]` because `System.Process` consumes `[String]`. Don't push it to `[Text]` and unpack at the call site.
+- The mechanical check is grep: search for `T.pack`/`T.unpack` adjacent to identifiers shaped like paths (`*Dir`, `*File`, `*Path`, `dir`, `path`, `cwd`). Each hit is either a Text-where-FilePath bug or an intentional crossing worth justifying.
+
+_Anti-patterns_:
+
+- A field typed `Maybe Text` holding a filesystem path (`working_dir`, `log_file`, `cwd`). Use `Maybe FilePath`.
+- `T.pack <$> somePath` or `T.unpack pathField` bridging the wrong type at an IO boundary. The conversion is the bug.
+- `[Text]` whose values are filesystem paths. Use `[FilePath]`.
+- `[Text]` named `paths` whose values are **not** pure paths (e.g. `git status --porcelain` lines that include status flags). Either rename the variable to reflect the real content (`lines`, `entries`), or parse the path out and use `[FilePath]`. Type and name must agree on what's inside.
+- Mixing the conventions across a single domain — some `working_dir` fields `FilePath`, others `Text`. Pick the right type once and use it everywhere.
+
 ## main-is-thin
 
 `src/Main.hs` is the harness: argv → parse → dispatch → exit. Anything more — orchestration, mode-specific IO, runtime-artifact layout, domain records, binary-path lookups — moves into a sibling module so adding a feature doesn't fatten Main.
