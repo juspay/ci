@@ -25,36 +25,44 @@ spec = do
   describe "parseDump" $ do
     context "top-level only" $ do
       it "decodes a single top-level recipe with no deps" $ do
-        let recipes = decodeOrFail topLevelOnlyJson
+        recipes <- decodeOrFail topLevelOnlyJson
         Map.keys recipes `shouldBe` ["solo"]
-        depNames (recipes Map.! "solo") `shouldBe` []
+        solo <- requireRecipe recipes "solo"
+        depNames solo `shouldBe` []
 
     context "submodule recipes" $ do
-      let recipes = decodeOrFail submoduleFixtureJson
-
-      it "keys every recipe by its fully-qualified namepath" $
+      it "keys every recipe by its fully-qualified namepath" $ do
+        recipes <- decodeOrFail submoduleFixtureJson
         Map.keys recipes
           `shouldMatchList` ["default", "sub::a", "sub::b", "sub::entry", "sub::fan", "sub::shared"]
 
-      it "leaves top-level recipe deps untouched" $
-        depNames (recipes Map.! "default") `shouldBe` []
+      it "leaves top-level recipe deps untouched" $ do
+        recipes <- decodeOrFail submoduleFixtureJson
+        top <- requireRecipe recipes "default"
+        depNames top `shouldBe` []
 
-      it "qualifies an unqualified sibling dep with the owner's module path" $
+      it "qualifies an unqualified sibling dep with the owner's module path" $ do
         -- sub::a's source dep is bare 'shared'; should become 'sub::shared'
-        depNames (recipes Map.! "sub::a") `shouldBe` ["sub::shared"]
+        recipes <- decodeOrFail submoduleFixtureJson
+        a <- requireRecipe recipes "sub::a"
+        depNames a `shouldBe` ["sub::shared"]
 
-      it "qualifies multiple sibling deps on the same recipe" $
-        depNames (recipes Map.! "sub::entry") `shouldMatchList` ["sub::a", "sub::b"]
+      it "qualifies multiple sibling deps on the same recipe" $ do
+        recipes <- decodeOrFail submoduleFixtureJson
+        entry <- requireRecipe recipes "sub::entry"
+        depNames entry `shouldMatchList` ["sub::a", "sub::b"]
 
       it "preserves the [parallel] attribute alongside qualified deps" $ do
-        let r = recipes Map.! "sub::fan"
-        r.attributes `shouldSatisfy` any isParallel
-        depNames r `shouldMatchList` ["sub::a", "sub::b"]
+        recipes <- decodeOrFail submoduleFixtureJson
+        fan <- requireRecipe recipes "sub::fan"
+        fan.attributes `shouldSatisfy` any isParallel
+        depNames fan `shouldMatchList` ["sub::a", "sub::b"]
 
     context "already-qualified deps" $ do
       it "trusts a dep that already contains :: verbatim" $ do
-        let recipes = decodeOrFail crossModuleDepJson
-        depNames (recipes Map.! "default") `shouldBe` ["sub::leaf"]
+        recipes <- decodeOrFail crossModuleDepJson
+        top <- requireRecipe recipes "default"
+        depNames top `shouldBe` ["sub::leaf"]
 
     context "errors" $ do
       it "returns ParseError on malformed JSON" $
@@ -62,10 +70,20 @@ spec = do
           Left _ -> pure ()
           Right _ -> expectationFailure "expected Left on malformed JSON"
 
-decodeOrFail :: BS.ByteString -> Map.Map RecipeName Recipe
+-- | Helpers that turn the "decode must succeed" and "key must be
+-- present" preconditions into structured hspec failures rather than
+-- the bare 'Map.!'/'error' panics the rule banner forbids. Both use
+-- 'fail', which in 'IO' throws an exception hspec catches and reports
+-- with the supplied message — no partial functions in either path.
+decodeOrFail :: BS.ByteString -> IO (Map.Map RecipeName Recipe)
 decodeOrFail bs = case parseDump bs of
-  Right m -> m
-  Left e -> error ("parseDump failed: " <> show e)
+  Right m -> pure m
+  Left e -> fail ("parseDump failed: " <> show e)
+
+requireRecipe :: Map.Map RecipeName Recipe -> RecipeName -> IO Recipe
+requireRecipe recipes k = case Map.lookup k recipes of
+  Just r -> pure r
+  Nothing -> fail ("missing recipe: " <> show k)
 
 depNames :: Recipe -> [RecipeName]
 depNames r = map (\d -> d.recipe) r.dependencies
