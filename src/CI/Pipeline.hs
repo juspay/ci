@@ -20,8 +20,8 @@ import CI.Gh (viewRepo)
 import CI.Git (ensureCleanTree, resolveSha, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (fetchDump, recipeCommand)
-import CI.Observer (runObserver)
 import CI.ProcessCompose (ProcessCompose, ServerMode (..), UpInvocation (..), runProcessCompose, toProcessCompose)
+import CI.ProcessCompose.Events (subscribeStates)
 import Control.Concurrent.Async (link, wait, withAsync)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
@@ -67,7 +67,7 @@ runStrict dirs extra = do
   sha <- dieOnLeft =<< resolveSha
   withSnapshotWorktree dirs.snap $ do
     pc <- buildProcessCompose (Just dirs.snap)
-    withAsync (runObserver dirs.sock [postConsumer repo sha]) $ \obs -> do
+    withAsync (subscribeStates dirs.sock (postConsumer repo sha)) $ \obs -> do
       -- 'link' propagates an observer crash to this thread, so any path
       -- past 'wait' below is a clean WebSocket close (process-compose
       -- shutdown closes the WS on its own).

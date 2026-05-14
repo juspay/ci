@@ -16,9 +16,9 @@ executable ci
                       CI.Git
                       CI.Graph
                       CI.Justfile
-                      CI.Observer
                       CI.Pipeline
                       CI.ProcessCompose
+                      CI.ProcessCompose.Events
                       CI.Subprocess
     build-depends:
         , aeson

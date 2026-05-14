@@ -16,7 +16,7 @@ module CI.CommitStatus (postConsumer) where
 
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
 import CI.Git (Sha)
-import CI.ProcessCompose (ProcessState (..), ProcessStatus (..))
+import CI.ProcessCompose.Events (ProcessState (..), ProcessStatus (..))
 import Control.Concurrent (forkIO)
 import Control.Monad (void)
 import Data.Foldable (for_)
@@ -49,15 +49,15 @@ describe Success = "Succeeded"
 describe Failure = "Failed"
 describe Error = "Errored"
 
--- | An observer consumer (see "CI.Observer") that translates each
--- 'ProcessState' into at most one 'postStatus' call under the
--- @ci/\<recipe\>@ context. Non-terminal states ('PsOther') drop on the
--- floor.
+-- | Translate each 'ProcessState' into at most one 'postStatus' call
+-- under the @ci/\<recipe\>@ context. Non-terminal states ('PsOther') drop
+-- on the floor.
 --
 -- The actual @gh api@ POST is forked so a slow or hung gh subprocess
--- doesn't back-pressure the WebSocket loop in 'subscribeStates' (each
--- post can take hundreds of ms; a burst of state transitions would
--- otherwise serialize behind them).
+-- doesn't back-pressure the subscription loop in
+-- 'CI.ProcessCompose.Events.subscribeStates' (each post can take hundreds
+-- of ms; a burst of state transitions would otherwise serialize behind
+-- them).
 postConsumer :: Repo -> Sha -> ProcessState -> IO ()
 postConsumer repo sha ps =
   for_ (psToCommitStatus ps) $ \cs ->
