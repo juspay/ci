@@ -68,11 +68,15 @@ ensureCleanTree = do
       [] -> Right ()
       dirty -> Left (DirtyTree dirty)
   where
-    -- Each non-empty porcelain line is @XY path@ — two status chars, a
-    -- space, then the path. Drop the three-char prefix to get the path.
+    -- Each non-empty porcelain v1 line is @XY path@: two status chars, a
+    -- space, then the path. Renames and copies are @XY orig -> new@ —
+    -- keep only the rename target for the user-facing list.
     porcelainPath line = case drop 3 line of
       "" -> Nothing
-      p -> Just p
+      rest -> Just (renameTarget rest)
+    renameTarget s = case T.breakOn " -> " (T.pack s) of
+      (_, arrowOnwards) | not (T.null arrowOnwards) -> T.unpack (T.drop 4 arrowOnwards)
+      _ -> s
 
 -- | Resolve the current HEAD SHA via @git rev-parse HEAD@. Used once at
 -- strict-mode startup so every commit-status post against this run targets

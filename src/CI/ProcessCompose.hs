@@ -35,7 +35,7 @@ where
 import qualified Algebra.Graph.AdjacencyMap as G
 import CI.Justfile (RecipeName)
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, SomeException, try)
+import Control.Exception (IOException, SomeException, bracketOnError, try)
 import Data.Aeson (FromJSON (parseJSON), ToJSON (..), camelTo2, defaultOptions, eitherDecodeStrict, genericToJSON, withText)
 import Data.Aeson.Types (Options (..))
 import qualified Data.ByteString as BS
@@ -264,20 +264,26 @@ subscribeStates sockPath onState = do
             Right ev -> onState ev.state
           loop conn
 
--- | Connect to a UDS, retrying with 100ms backoff up to ~10s. The socket
--- may not exist yet at startup (process-compose creates it a beat after
--- spawn); any 'IOException' from @connect@ — including ENOENT for the
--- not-yet-created path — triggers a retry. After the ceiling, the final
--- exception propagates so the caller (and 'link') sees it.
+-- | Connect to a UDS, retrying with 100ms backoff up to 100 attempts
+-- (~10s ceiling). The socket may not exist yet at startup
+-- (process-compose creates it a beat after spawn); any 'IOException' from
+-- @connect@ — including ENOENT for the not-yet-created path — triggers a
+-- retry. The final attempt's exception propagates so the caller (and
+-- 'link') sees it. 'bracketOnError' ensures the half-open socket fd is
+-- closed before each retry — without it, 100 retries leak 100 fds.
 connectWithRetry :: FilePath -> IO S.Socket
 connectWithRetry sockPath = go (100 :: Int)
   where
-    go 0 = attempt
+    go 1 = attempt
     go n =
       try attempt >>= \case
         Right sock -> pure sock
         Left (_ :: IOException) -> threadDelay 100_000 >> go (n - 1)
-    attempt = do
-      sock <- S.socket S.AF_UNIX S.Stream S.defaultProtocol
-      S.connect sock (S.SockAddrUnix sockPath)
-      pure sock
+    attempt =
+      bracketOnError
+        (S.socket S.AF_UNIX S.Stream S.defaultProtocol)
+        S.close
+        ( \sock -> do
+            S.connect sock (S.SockAddrUnix sockPath)
+            pure sock
+        )
