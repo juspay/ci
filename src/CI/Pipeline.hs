@@ -85,8 +85,8 @@ runStrict dirs passthrough = do
   repo <- dieOnLeft =<< viewRepo
   sha <- dieOnLeft =<< resolveSha
   let logDir = logDirFor dirs.runRoot sha
-  createDirectoryIfMissing True logDir
   withSnapshotWorktree dirs.worktreePath $ do
+    createDirectoryIfMissing True logDir
     pc <- buildProcessCompose (StrictRun dirs.worktreePath logDir)
     seedPending repo sha logDir (processNames pc)
     withAsync (subscribeStates dirs.sock (postStatusFor repo sha logDir)) $ \obs -> do
