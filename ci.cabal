@@ -14,6 +14,7 @@ library
                       CI.Git
                       CI.Graph
                       CI.Justfile
+                      CI.LogPath
                       CI.Pipeline
                       CI.ProcessCompose
                       CI.ProcessCompose.Events
@@ -57,13 +58,16 @@ test-suite ci-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     other-modules:    CI.JustfileSpec
+                      CI.ProcessComposeSpec
                       CI.VerdictSpec
     build-depends:
+        , algebraic-graphs
         , base
         , bytestring
         , ci
         , containers
         , hspec
         , text
+        , yaml
     hs-source-dirs:   test
     default-language: Haskell2010
