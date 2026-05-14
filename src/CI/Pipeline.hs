@@ -22,13 +22,12 @@ import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (fetchDump, recipeCommand)
 import CI.Observer (runObserver)
 import CI.ProcessCompose (ProcessCompose, ServerMode (..), UpInvocation (..), runProcessCompose, toProcessCompose)
-import Control.Concurrent.Async (link, waitCatch, withAsync)
+import Control.Concurrent.Async (link, wait, withAsync)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.Exit (die, exitWith)
 import System.FilePath ((</>))
-import System.IO (hPutStrLn, stderr)
 
 -- | The three artifact paths under @\$PWD\/.ci\/@. Built once at the top of
 -- a run so 'runLocal' and 'runStrict' both reference the same convention
@@ -69,18 +68,12 @@ runStrict dirs extra = do
   withSnapshotWorktree dirs.snap $ do
     pc <- buildProcessCompose (Just dirs.snap)
     withAsync (runObserver dirs.sock [postConsumer repo sha]) $ \obs -> do
-      -- 'link' propagates an observer crash to this thread (so an
-      -- observer-side exception aborts the pipeline rather than silently
-      -- proceeding with no status posts). 'waitCatch' after the pipeline
-      -- finishes lets the observer drain queued events — process-compose's
-      -- WS closes on its own shutdown, so this is bounded by the close
-      -- handshake.
+      -- 'link' propagates an observer crash to this thread, so any path
+      -- past 'wait' below is a clean WebSocket close (process-compose
+      -- shutdown closes the WS on its own).
       link obs
       ec <- runProcessCompose (UpInvocation (UnixSocket dirs.sock) dirs.pcLog extra) pc
-      obsResult <- waitCatch obs
-      case obsResult of
-        Right () -> pure ()
-        Left e -> hPutStrLn stderr $ "observer: exited with error: " <> show e
+      wait obs
       exitWith ec
 
 -- | Walk @just --dump@ → entrypoint → reachable subgraph → topologically

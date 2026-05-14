@@ -17,6 +17,8 @@ module CI.CommitStatus (postConsumer) where
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
 import CI.Git (Sha)
 import CI.ProcessCompose (ProcessState (..), ProcessStatus (..))
+import Control.Concurrent (forkIO)
+import Control.Monad (void)
 import Data.Foldable (for_)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -51,9 +53,15 @@ describe Error = "Errored"
 -- 'ProcessState' into at most one 'postStatus' call under the
 -- @ci/\<recipe\>@ context. Non-terminal states ('PsOther') drop on the
 -- floor.
+--
+-- The actual @gh api@ POST is forked so a slow or hung gh subprocess
+-- doesn't back-pressure the WebSocket loop in 'subscribeStates' (each
+-- post can take hundreds of ms; a burst of state transitions would
+-- otherwise serialize behind them).
 postConsumer :: Repo -> Sha -> ProcessState -> IO ()
 postConsumer repo sha ps =
-  for_ (psToCommitStatus ps) (postStatus repo sha (mkContext ps.name))
+  for_ (psToCommitStatus ps) $ \cs ->
+    void $ forkIO $ postStatus repo sha (mkContext ps.name) cs
 
 psToCommitStatus :: ProcessState -> Maybe CommitStatus
 psToCommitStatus ps = case (ps.status, ps.exit_code) of

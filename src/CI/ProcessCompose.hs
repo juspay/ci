@@ -35,7 +35,7 @@ where
 import qualified Algebra.Graph.AdjacencyMap as G
 import CI.Justfile (RecipeName)
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, SomeException, bracketOnError, try)
+import Control.Exception (IOException, bracketOnError, try)
 import Data.Aeson (FromJSON (parseJSON), ToJSON (..), camelTo2, defaultOptions, eitherDecodeStrict, genericToJSON, withText)
 import Data.Aeson.Types (Options (..))
 import qualified Data.ByteString as BS
@@ -243,26 +243,45 @@ runProcessCompose up pc =
 -- creation.
 --
 -- The callback runs in the event-loop thread; fork inside if you need
--- to do slow work. Decode failures and stream-end exceptions are logged
--- to stderr and (for decode failures) skipped — the loop continues.
+-- to do slow work. A clean WebSocket close ('WS.ConnectionException')
+-- logs and returns; any other exception propagates so 'link' on the
+-- observer thread aborts the pipeline. Decode failures are logged and
+-- tolerated up to 'maxConsecutiveDecodeFailures' in a row — past that,
+-- the wire format has likely drifted and we throw rather than silently
+-- drop every event.
 subscribeStates :: FilePath -> (ProcessState -> IO ()) -> IO ()
 subscribeStates sockPath onState = do
   hPutStrLn stderr $ "observer: connecting to " <> sockPath
   sock <- connectWithRetry sockPath
   WS.runClientWithSocket sock "localhost" "/process/states/ws" WS.defaultConnectionOptions [] $ \conn -> do
     hPutStrLn stderr "observer: connected, streaming events"
-    loop conn
+    loop conn maxConsecutiveDecodeFailures
   where
-    loop conn = do
+    loop conn budget = do
       result <- try (WS.receiveData conn)
       case result of
-        Left (e :: SomeException) ->
-          hPutStrLn stderr $ "observer: stream ended (" <> show e <> ")"
-        Right (bs :: BSL.ByteString) -> do
-          case eitherDecodeStrict @ProcessStateEvent (BSL.toStrict bs) of
-            Left err -> hPutStrLn stderr $ "observer: decode error: " <> err
-            Right ev -> onState ev.state
-          loop conn
+        Left (e :: WS.ConnectionException) ->
+          hPutStrLn stderr $ "observer: stream closed (" <> show e <> ")"
+        Right (bs :: BSL.ByteString) -> case eitherDecodeStrict @ProcessStateEvent (BSL.toStrict bs) of
+          Left err
+            | budget > 1 -> do
+                hPutStrLn stderr $ "observer: decode error: " <> err
+                loop conn (budget - 1)
+            | otherwise ->
+                fail $
+                  "observer: "
+                    <> show maxConsecutiveDecodeFailures
+                    <> " consecutive decode failures; wire format drifted? last error: "
+                    <> err
+          Right ev -> do
+            onState ev.state
+            loop conn maxConsecutiveDecodeFailures
+
+-- | Tolerate up to this many decode failures in a row before tearing the
+-- observer down. Set low enough that a real wire-format drift surfaces
+-- promptly, high enough that one bad frame doesn't kill the run.
+maxConsecutiveDecodeFailures :: Int
+maxConsecutiveDecodeFailures = 5
 
 -- | Connect to a UDS, retrying with 100ms backoff up to 100 attempts
 -- (~10s ceiling). The socket may not exist yet at startup
