@@ -7,7 +7,7 @@
 --   * @dump-yaml@: print the assembled YAML to stdout.
 module Main where
 
-import CI.Pipeline (buildProcessCompose, ensureRunDir, runLocal, runStrict)
+import CI.Pipeline (RunMode (..), buildProcessCompose, ensureRunDir, runLocal, runStrict)
 import Control.Applicative (many, (<|>))
 import qualified Data.ByteString as BS
 import qualified Data.Yaml as Y
@@ -43,7 +43,7 @@ main = do
         then runStrict dirs passthrough
         else runLocal dirs passthrough
     DumpYaml -> do
-      pc <- buildProcessCompose Nothing
+      pc <- buildProcessCompose LocalRun
       BS.putStr (Y.encode pc)
 
 parserInfo :: ParserInfo Command

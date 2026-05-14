@@ -3,7 +3,10 @@
 module Main (main) where
 
 import qualified CI.JustfileSpec
+import qualified CI.ProcessComposeSpec
 import Test.Hspec (hspec)
 
 main :: IO ()
-main = hspec CI.JustfileSpec.spec
+main = hspec $ do
+  CI.JustfileSpec.spec
+  CI.ProcessComposeSpec.spec

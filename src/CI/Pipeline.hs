@@ -7,6 +7,7 @@
 -- shaped lives here.
 module CI.Pipeline
   ( RunDir (..),
+    RunMode (..),
     ensureRunDir,
     runLocal,
     runStrict,
@@ -20,6 +21,7 @@ import CI.Gh (viewRepo)
 import CI.Git (ensureCleanTree, resolveSha, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (fetchDump, recipeCommand)
+import CI.LogPath (logDirFor, logPathFor)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (subscribeStates)
 import Control.Concurrent.Async (link, wait, withAsync)
@@ -61,22 +63,30 @@ ensureRunDir = do
 -- server).
 runLocal :: RunDir -> [String] -> IO ()
 runLocal dirs passthrough = do
-  pc <- buildProcessCompose Nothing
+  pc <- buildProcessCompose LocalRun
   runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc >>= exitWith
 
 -- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
 -- via @git worktree@ at @.ci\/worktree@ → start process-compose with its
 -- API on @.ci\/pc.sock@ → subscribe to state events and post commit
 -- statuses concurrently with the pipeline run.
+--
+-- Per-recipe stdout/stderr is split into @.ci\/\<sha\>\/\<recipe\>.log@
+-- (created here before process-compose spawns) so each GitHub commit
+-- status can carry a navigable path to the matching log. The SHA-keyed
+-- directory keeps history across runs: a green-then-red sequence on the
+-- same checkout leaves both runs' logs side-by-side under @.ci\/@.
 runStrict :: RunDir -> [String] -> IO ()
 runStrict dirs passthrough = do
   dieOnLeft =<< ensureCleanTree
   repo <- dieOnLeft =<< viewRepo
   sha <- dieOnLeft =<< resolveSha
+  let logDir = logDirFor sha
   withSnapshotWorktree dirs.worktreePath $ do
-    pc <- buildProcessCompose (Just dirs.worktreePath)
-    seedPending repo sha (processNames pc)
-    withAsync (subscribeStates dirs.sock (postStatusFor repo sha)) $ \obs -> do
+    createDirectoryIfMissing True logDir
+    pc <- buildProcessCompose $ StrictRun dirs.worktreePath logDir
+    seedPending repo sha logDir $ processNames pc
+    withAsync (subscribeStates dirs.sock $ postStatusFor repo sha logDir) $ \obs -> do
       -- 'link' propagates an observer crash to this thread, so any path
       -- past 'wait' below is a clean WebSocket close (process-compose
       -- shutdown closes the WS on its own).
@@ -85,17 +95,37 @@ runStrict dirs passthrough = do
       wait obs
       exitWith ec
 
+-- | The two pipeline-build modes. 'LocalRun' is the @dev@ / @dump-yaml@
+-- shape: no worktree pin, no per-recipe log routing. 'StrictRun'
+-- carries the two paths that always travel together — the @git
+-- worktree@ snapshot every recipe @chdir@s into, and the
+-- @.ci\/\<sha\>\/@ log directory the YAML emitter routes each
+-- process's stdout/stderr to. A sum type instead of two parallel
+-- @Maybe FilePath@s rules out the mixed @(Just, Nothing)@ /
+-- @(Nothing, Just)@ states that produce logically inconsistent YAML.
+data RunMode
+  = LocalRun
+  | -- | @StrictRun worktreeDir logDir@.
+    StrictRun FilePath FilePath
+
 -- | Walk @just --dump@ → root → reachable subgraph → topologically
--- lowered DAG → 'ProcessCompose' YAML. The @workingDir@ argument is set in
--- strict mode (every recipe @chdir@s into the worktree snapshot); 'Nothing'
--- in local mode and for @dump-yaml@.
-buildProcessCompose :: Maybe FilePath -> IO ProcessCompose
-buildProcessCompose workingDir = do
+-- lowered DAG → 'ProcessCompose' YAML, parameterised by the run mode.
+-- The two per-process knobs ('workingDir' and 'logLocation') each
+-- pattern-match on 'RunMode' directly — the sum-type discipline reaches
+-- the YAML emitter rather than being unpacked into a @(Maybe, Maybe)@
+-- pair one line up.
+buildProcessCompose :: RunMode -> IO ProcessCompose
+buildProcessCompose mode = do
   recipes <- dieOnLeft =<< fetchDump
   root <- dieOnLeft $ findRoot recipes
   reachable <- dieOnLeft $ reachableSubgraph root recipes
   graph <- dieOnLeft $ lowerToRunnerGraph reachable
-  pure $ toProcessCompose workingDir recipeCommand graph
+  pure $ toProcessCompose (workingDir mode) recipeCommand (logLocation mode) graph
+  where
+    workingDir LocalRun = Nothing
+    workingDir (StrictRun wt _) = Just wt
+    logLocation LocalRun = const Nothing
+    logLocation (StrictRun _ ld) = Just . logPathFor ld
 
 -- | The single 'die' site in the project: every recoverable failure
 -- mode threads up through @Either e a@ to this boundary, where the

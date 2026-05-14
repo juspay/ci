@@ -13,6 +13,7 @@ module CI.CommitStatus (postStatusFor, seedPending) where
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
 import CI.Git (Sha)
 import CI.Justfile (RecipeName)
+import CI.LogPath (logPathFor)
 import CI.ProcessCompose.Events (ProcessState (..), ProcessStatus (..))
 import Control.Concurrent.Async (forConcurrently_)
 import Data.Foldable (for_)
@@ -24,6 +25,12 @@ import System.IO (hPutStrLn, stderr)
 -- | Given a process-compose state event, post the corresponding GitHub
 -- commit status under the @ci/\<recipe\>@ context. Non-terminal states
 -- ('PsOther') drop on the floor.
+--
+-- The status @description@ embeds the path to the recipe's per-run log
+-- (@\<logDir\>\/\<recipe\>.log@) so a red check in the GitHub UI carries
+-- a navigable pointer to the failing output. The same path is set as
+-- the process's @log_location@ in the process-compose YAML, so the
+-- file on disk and the path in the status agree by construction.
 --
 -- Synchronous: each post blocks the subscription loop in
 -- 'CI.ProcessCompose.Events.subscribeStates' until @gh api@ returns. This
@@ -37,10 +44,10 @@ import System.IO (hPutStrLn, stderr)
 -- Posting failures are logged to stderr with a @gh:@ prefix and
 -- swallowed — the recipe's exit code must not depend on whether a
 -- status post succeeded.
-postStatusFor :: Repo -> Sha -> ProcessState -> IO ()
-postStatusFor repo sha ps =
+postStatusFor :: Repo -> Sha -> FilePath -> ProcessState -> IO ()
+postStatusFor repo sha logDir ps =
   for_ (psToCommitStatus ps) $ \cs ->
-    postOne repo sha ps.name cs (describe cs)
+    postOne repo sha ps.name cs $ describe cs $ logPathFor logDir ps.name
 
 -- | Pre-seed every recipe with a 'Pending' commit status at startup —
 -- one parallel @gh api@ POST per recipe, all joined before this returns.
@@ -56,9 +63,10 @@ postStatusFor repo sha ps =
 -- N parallel single-status POSTs. 'forConcurrently_' joins all of them
 -- before returning, so the caller can rely on every seed being in place
 -- before the pipeline kicks off.
-seedPending :: Repo -> Sha -> [RecipeName] -> IO ()
-seedPending repo sha recipes =
-  forConcurrently_ recipes $ \r -> postOne repo sha r Pending "Queued"
+seedPending :: Repo -> Sha -> FilePath -> [RecipeName] -> IO ()
+seedPending repo sha logDir recipes =
+  forConcurrently_ recipes $ \r ->
+    postOne repo sha r Pending $ seedDescription $ logPathFor logDir r
 
 -- | Issue one commit-status POST with a caller-supplied description and
 -- log the outcome.
@@ -77,12 +85,31 @@ postOne repo sha recipe cs desc = do
 mkContext :: Display a => a -> Context
 mkContext recipe = contextFrom (display recipe)
 
--- | CI's human-readable label per state; sent as the @description@ field.
-describe :: CommitStatus -> Text
-describe Pending = "Running"
-describe Success = "Succeeded"
-describe Failure = "Failed"
-describe Error = "Errored"
+-- | CI's human-readable label per state, suffixed with the recipe's log
+-- path so the GitHub UI's 140-char description carries a one-click
+-- pointer to the matching file under @.ci\/\<sha\>\/@. Path stays under
+-- ~80 chars at typical recipe-name lengths, leaving room for the state
+-- prose without truncation.
+describe :: CommitStatus -> FilePath -> Text
+describe cs = withLogPath $ stateLabel cs
+  where
+    stateLabel Pending = "Running"
+    stateLabel Success = "Succeeded"
+    stateLabel Failure = "Failed"
+    stateLabel Error = "Errored"
+
+-- | Description for a 'seedPending' post, formatted the same way as
+-- 'describe' so the seed and transition lifecycles share one path-bearing
+-- shape. If the description format ever changes (e.g. path moves to a
+-- @target_url@ field), 'withLogPath' is the single edit site.
+seedDescription :: FilePath -> Text
+seedDescription = withLogPath "Queued"
+
+-- | Internal: @\<label\>: \<logPath\>@. Owns the description shape so
+-- every status post under the same SHA + context carries the same
+-- format across its lifecycle.
+withLogPath :: Text -> FilePath -> Text
+withLogPath label logPath = label <> ": " <> T.pack logPath
 
 psToCommitStatus :: ProcessState -> Maybe CommitStatus
 psToCommitStatus ps = case (ps.status, ps.exit_code) of
