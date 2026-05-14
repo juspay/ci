@@ -11,7 +11,6 @@ executable ci
     import:           warnings
     main-is:          Main.hs
     other-modules:    CI.CommitStatus
-                      CI.Entrypoint
                       CI.Gh
                       CI.Git
                       CI.Graph
@@ -19,6 +18,7 @@ executable ci
                       CI.Pipeline
                       CI.ProcessCompose
                       CI.ProcessCompose.Events
+                      CI.Root
                       CI.Subprocess
     build-depends:
         , aeson

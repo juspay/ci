@@ -9,7 +9,7 @@
 
 -- | Everything tied to the @just@ data model: the @just@ CLI and its
 -- @--dump --dump-format json@ schema. Discovery policy (which decoded
--- recipe is the CI root) lives in @CI.Entrypoint@ — that axis of change is
+-- recipe is the pipeline root) lives in @CI.Root@ — that axis of change is
 -- independent of the wire format and shouldn't ride along here.
 module CI.Justfile
   ( -- * Schema

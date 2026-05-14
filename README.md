@@ -2,10 +2,10 @@
 
 A Haskell pipeline runner: translates a `just` recipe graph into a [process-compose](https://f1bonacc1.github.io/process-compose/) DAG and drives it. In strict mode, posts per-recipe GitHub commit statuses live as the pipeline runs.
 
-The entrypoint is the recipe annotated `[metadata("entrypoint")]` — exactly one per justfile (zero or multiple is a startup error). Its reachable dependency subgraph becomes the pipeline.
+The pipeline root is the recipe annotated `[metadata("ci")]` — exactly one per justfile (zero or multiple is a startup error). Its reachable dependency subgraph becomes the pipeline.
 
 ```
-just --dump → entrypoint → reachable subgraph → process-compose YAML → run
+just --dump → root → reachable subgraph → process-compose YAML → run
 ```
 
 ## Modes

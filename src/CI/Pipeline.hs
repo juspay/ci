@@ -15,7 +15,7 @@ module CI.Pipeline
 where
 
 import CI.CommitStatus (postStatusFor, seedPending)
-import CI.Entrypoint (findEntrypoint)
+import CI.Root (findRoot)
 import CI.Gh (viewRepo)
 import CI.Git (ensureCleanTree, resolveSha, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
@@ -85,14 +85,14 @@ runStrict dirs passthrough = do
       wait obs
       exitWith ec
 
--- | Walk @just --dump@ → entrypoint → reachable subgraph → topologically
+-- | Walk @just --dump@ → root → reachable subgraph → topologically
 -- lowered DAG → 'ProcessCompose' YAML. The @workingDir@ argument is set in
 -- strict mode (every recipe @chdir@s into the worktree snapshot); 'Nothing'
 -- in local mode and for @dump-yaml@.
 buildProcessCompose :: Maybe FilePath -> IO ProcessCompose
 buildProcessCompose workingDir = do
   recipes <- dieOnLeft =<< fetchDump
-  root <- dieOnLeft $ findEntrypoint recipes
+  root <- dieOnLeft $ findRoot recipes
   reachable <- dieOnLeft $ reachableSubgraph root recipes
   graph <- dieOnLeft $ lowerToRunnerGraph reachable
   pure $ toProcessCompose workingDir recipeCommand graph
@@ -102,7 +102,7 @@ buildProcessCompose workingDir = do
 -- structured error's 'Display' rendering becomes the exit message.
 --
 -- Shape note: takes @Either e a@ rather than @IO (Either e a)@ so the
--- same helper works for both pure Eithers (@dieOnLeft $ findEntrypoint
+-- same helper works for both pure Eithers (@dieOnLeft $ findRoot
 -- recipes@) and IO ones (@dieOnLeft =<< ensureCleanTree@). A helper
 -- typed to @IO (Either e a) -> IO a@ would force every pure call site
 -- to add a @pure@.
