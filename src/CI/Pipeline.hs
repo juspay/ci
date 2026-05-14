@@ -89,6 +89,14 @@ buildProcessCompose workingDir = do
   graph <- dieOnLeft $ lowerToRunnerGraph reachable
   pure $ toProcessCompose workingDir recipeCommand graph
 
--- | Die at the boundary with the structured error's Display rendering.
+-- | The single 'die' site in the project: every recoverable failure
+-- mode threads up through @Either e a@ to this boundary, where the
+-- structured error's 'Display' rendering becomes the exit message.
+--
+-- Shape note: takes @Either e a@ rather than @IO (Either e a)@ so the
+-- same helper works for both pure Eithers (@dieOnLeft $ findEntrypoint
+-- recipes@) and IO ones (@dieOnLeft =<< ensureCleanTree@). A helper
+-- typed to @IO (Either e a) -> IO a@ would force every pure call site
+-- to add a @pure@.
 dieOnLeft :: Display e => Either e a -> IO a
 dieOnLeft = either (die . T.unpack . display) pure
