@@ -33,8 +33,8 @@ spec = describe "runVerdictFrom" $ do
     let (code, _) = runVerdictFrom $ Map.fromList [("a", Succeeded), ("b", Skipped)]
     code `shouldBe` ExitFailure 1
 
-  it "exits non-zero when any recipe is still Pending (never reached terminal state)" $ do
-    let (code, _) = runVerdictFrom $ Map.fromList [("a", Succeeded), ("b", Pending)]
+  it "exits non-zero when any recipe is still Unreported (never reached terminal state)" $ do
+    let (code, _) = runVerdictFrom $ Map.fromList [("a", Succeeded), ("b", Unreported)]
     code `shouldBe` ExitFailure 1
 
   it "lists every recipe in the summary lines" $ do

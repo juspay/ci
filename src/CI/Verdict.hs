@@ -35,16 +35,19 @@ import qualified Data.Text as T
 import Data.Text.Display (Display (..), display)
 import System.Exit (ExitCode (..))
 
--- | The terminal outcome of one recipe in a pipeline run. 'Pending'
+-- | The terminal outcome of one recipe in a pipeline run. 'Unreported'
 -- means \"the observer never saw a terminal state event for this
 -- recipe\" (the seed value) — distinguishing it from a process that
 -- ran and succeeded keeps the verdict honest when pc crashes before
--- scheduling a recipe.
-data RecipeOutcome = Pending | Succeeded | Failed | Skipped
+-- scheduling a recipe. The name is intentionally distinct from
+-- 'CI.Gh.CommitStatus.Pending' (which is the in-flight \"check is
+-- open\" transition GitHub posts during a run) — same word would mean
+-- opposite things in adjacent modules.
+data RecipeOutcome = Unreported | Succeeded | Failed | Skipped
   deriving stock (Show, Eq)
 
 instance Display RecipeOutcome where
-  displayBuilder Pending = "pending"
+  displayBuilder Unreported = "unreported"
   displayBuilder Succeeded = "succeeded"
   displayBuilder Failed = "failed"
   displayBuilder Skipped = "skipped"
@@ -55,22 +58,22 @@ instance Display RecipeOutcome where
 -- minted only by 'newOutcomes' and read only by 'readOutcomes'.
 newtype Outcomes = Outcomes (IORef (Map RecipeName RecipeOutcome))
 
--- | Pre-populate the outcome map with 'Pending' for every recipe in
--- the lowered pipeline. Without this, a recipe that pc never emits a
--- state event for (e.g. pc crashed before scheduling it) would be
+-- | Pre-populate the outcome map with 'Unreported' for every recipe
+-- in the lowered pipeline. Without this, a recipe that pc never emits
+-- a state event for (e.g. pc crashed before scheduling it) would be
 -- absent from the final map entirely; with it, missing-from-pc
--- surfaces as a lingering 'Pending', which 'runVerdictFrom' treats
+-- surfaces as a lingering 'Unreported', which 'runVerdictFrom' treats
 -- as a non-success and rolls into a non-zero exit.
 newOutcomes :: [RecipeName] -> IO Outcomes
 newOutcomes recipes =
-  Outcomes <$> newIORef (Map.fromList [(r, Pending) | r <- recipes])
+  Outcomes <$> newIORef (Map.fromList [(r, Unreported) | r <- recipes])
 
 -- | Fold one 'ProcessState' event into the outcome map. Routes through
 -- 'psToTerminalStatus' — the project-wide ground-truth classifier of
 -- process-compose's terminal states — and adopts its outcome under
 -- the verdict's own vocabulary. Non-terminal events ('PsRunning',
--- 'PsOther') are dropped; the seed 'Pending' stays in place until a
--- real terminal event arrives.
+-- 'PsOther') are dropped; the seed 'Unreported' stays in place until
+-- a real terminal event arrives.
 --
 -- Safe to call from any thread; the underlying 'atomicModifyIORef''
 -- serializes concurrent writes. In practice only the observer thread
@@ -103,7 +106,7 @@ readOutcomes (Outcomes ref) = readIORef ref
 -- | Derive the pipeline's exit code and a printable summary from the
 -- accumulated outcomes. The exit code is 0 iff every recipe finished
 -- 'Succeeded'; anything else — 'Failed', 'Skipped', or a lingering
--- 'Pending' — flips it to 'ExitFailure' 1.
+-- 'Unreported' — flips it to 'ExitFailure' 1.
 --
 -- Pure: the 'IORef' read happens in the caller; this function takes a
 -- snapshot map and is trivial to test against handcrafted inputs.
