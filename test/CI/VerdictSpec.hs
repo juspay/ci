@@ -14,6 +14,7 @@ import CI.Verdict (RecipeOutcome (..), terminalToOutcome, verdictCode, verdictSu
 import Data.Foldable (for_)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
+import Data.Text.Display (display)
 import System.Exit (ExitCode (..))
 import Test.Hspec
 
@@ -45,13 +46,10 @@ spec = do
 
   describe "verdictSummary" $ do
     it "lists every recipe in the summary lines" $ do
-      let joined =
-            T.unlines $
-              verdictSummary $
-                Map.fromList [("alpha", Succeeded), ("beta", Failed), ("gamma", Skipped)]
-      "alpha" `T.isInfixOf` joined `shouldBe` True
-      "beta" `T.isInfixOf` joined `shouldBe` True
-      "gamma" `T.isInfixOf` joined `shouldBe` True
+      let recipes = [("alpha", Succeeded), ("beta", Failed), ("gamma", Skipped)]
+          joined = T.unlines $ verdictSummary $ Map.fromList recipes
+      for_ recipes $ \(n, _) ->
+        (display n `T.isInfixOf` joined) `shouldBe` True
 
   -- Cross-module invariant: the two consumers of 'TerminalStatus'
   -- ('terminalToOutcome' in CI.Verdict, 'terminalToCommitStatus' in

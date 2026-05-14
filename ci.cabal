@@ -68,6 +68,7 @@ test-suite ci-test
         , containers
         , hspec
         , text
+        , text-display
         , yaml
     hs-source-dirs:   test
     default-language: Haskell2010
