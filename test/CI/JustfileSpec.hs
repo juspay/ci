@@ -8,7 +8,7 @@
 -- is covered end-to-end by the justfile's @run-check@ smoke test.
 module CI.JustfileSpec (spec) where
 
-import CI.Justfile (Dep (..), Recipe (..), RecipeName, parseDump, recipeCommand)
+import CI.Justfile (Attribute (..), Dep (..), Recipe (..), RecipeName, parseDump, recipeCommand)
 import qualified Data.ByteString as BS
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -34,7 +34,7 @@ spec = do
 
       it "keys every recipe by its fully-qualified namepath" $
         Map.keys recipes
-          `shouldMatchList` ["default", "sub::a", "sub::b", "sub::entry", "sub::shared"]
+          `shouldMatchList` ["default", "sub::a", "sub::b", "sub::entry", "sub::fan", "sub::shared"]
 
       it "leaves top-level recipe deps untouched" $
         depNames (recipes Map.! "default") `shouldBe` []
@@ -45,6 +45,11 @@ spec = do
 
       it "qualifies multiple sibling deps on the same recipe" $
         depNames (recipes Map.! "sub::entry") `shouldMatchList` ["sub::a", "sub::b"]
+
+      it "preserves the [parallel] attribute alongside qualified deps" $ do
+        let r = recipes Map.! "sub::fan"
+        r.attributes `shouldSatisfy` any isParallel
+        depNames r `shouldMatchList` ["sub::a", "sub::b"]
 
     context "already-qualified deps" $ do
       it "trusts a dep that already contains :: verbatim" $ do
@@ -65,6 +70,10 @@ decodeOrFail bs = case parseDump bs of
 depNames :: Recipe -> [RecipeName]
 depNames r = map (\d -> d.recipe) r.dependencies
 
+isParallel :: Attribute -> Bool
+isParallel Parallel = True
+isParallel _ = False
+
 -- | One top-level recipe, no submodules. Smallest input that parseDump
 -- can succeed on — exercises the no-flattening, no-qualifying path.
 topLevelOnlyJson :: BS.ByteString
@@ -79,9 +88,11 @@ crossModuleDepJson =
   "{\"recipes\":{\"default\":{\"namepath\":\"default\",\"dependencies\":[{\"recipe\":\"sub::leaf\",\"arguments\":[]}],\"parameters\":[],\"attributes\":[]}},\"modules\":{\"sub\":{\"recipes\":{\"leaf\":{\"namepath\":\"sub::leaf\",\"dependencies\":[],\"parameters\":[],\"attributes\":[]}},\"modules\":{}}}}"
 
 -- | The shape the @test/fixtures/with-module@ justfile produces: a
--- bare top-level @default@ plus a @sub@ module with five recipes,
--- two of which (@a@, @b@) depend on a sibling (@shared@) and one
--- (@entry@) depends on both. Mirrors the json captured by running
+-- bare top-level @default@ plus a @sub@ module with five recipes —
+-- @entry@ (tagged @[metadata("ci")]@) depending on @a@ and @b@,
+-- @fan@ (tagged @[parallel]@) depending on the same two, both @a@
+-- and @b@ depending on a shared upstream @shared@, and @shared@
+-- itself with no deps. Mirrors the json captured by running
 -- @just --dump --dump-format json@ in that fixture directory.
 submoduleFixtureJson :: BS.ByteString
 submoduleFixtureJson =
@@ -90,5 +101,6 @@ submoduleFixtureJson =
   \\"a\":{\"namepath\":\"sub::a\",\"dependencies\":[{\"recipe\":\"shared\",\"arguments\":[]}],\"parameters\":[],\"attributes\":[]},\
   \\"b\":{\"namepath\":\"sub::b\",\"dependencies\":[{\"recipe\":\"shared\",\"arguments\":[]}],\"parameters\":[],\"attributes\":[]},\
   \\"entry\":{\"namepath\":\"sub::entry\",\"dependencies\":[{\"recipe\":\"a\",\"arguments\":[]},{\"recipe\":\"b\",\"arguments\":[]}],\"parameters\":[],\"attributes\":[{\"metadata\":[\"ci\"]}]},\
+  \\"fan\":{\"namepath\":\"sub::fan\",\"dependencies\":[{\"recipe\":\"a\",\"arguments\":[]},{\"recipe\":\"b\",\"arguments\":[]}],\"parameters\":[],\"attributes\":[\"parallel\"]},\
   \\"shared\":{\"namepath\":\"sub::shared\",\"dependencies\":[],\"parameters\":[],\"attributes\":[]}\
   \},\"modules\":{}}}}"
