@@ -24,6 +24,12 @@ run-check: build
     nix run . -- dump-yaml | tee /tmp/ci-out
     grep -qE '^  ci::default:' /tmp/ci-out
     grep -qE -- '--no-deps' /tmp/ci-out
+    # Cross-lane failure tolerance: every process emits `restart: no` and
+    # `exit_on_skipped: false` so one failing recipe leaves siblings
+    # running. The verdict step derives the final exit code from the
+    # accumulated outcomes, not pc's own exit.
+    grep -qE "^      restart: 'no'$" /tmp/ci-out
+    grep -qE '^      exit_on_skipped: false$' /tmp/ci-out
 
 [macos]
 run-check: build
@@ -31,3 +37,5 @@ run-check: build
     nix run . -- dump-yaml | tee "${TMPDIR%/}/ci-out"
     grep -qE '^  ci::default:' "${TMPDIR%/}/ci-out"
     grep -qE -- '--no-deps' "${TMPDIR%/}/ci-out"
+    grep -qE "^      restart: 'no'$" "${TMPDIR%/}/ci-out"
+    grep -qE '^      exit_on_skipped: false$' "${TMPDIR%/}/ci-out"

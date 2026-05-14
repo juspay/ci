@@ -20,6 +20,7 @@ library
                       CI.ProcessCompose.Events
                       CI.Root
                       CI.Subprocess
+                      CI.Verdict
     build-depends:
         , aeson
         , algebraic-graphs
@@ -58,6 +59,7 @@ test-suite ci-test
     main-is:          Spec.hs
     other-modules:    CI.JustfileSpec
                       CI.ProcessComposeSpec
+                      CI.VerdictSpec
     build-depends:
         , algebraic-graphs
         , base
@@ -66,6 +68,7 @@ test-suite ci-test
         , containers
         , hspec
         , text
+        , text-display
         , yaml
     hs-source-dirs:   test
     default-language: Haskell2010

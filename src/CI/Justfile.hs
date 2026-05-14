@@ -14,6 +14,7 @@
 module CI.Justfile
   ( -- * Schema
     RecipeName,
+    recipeNameFromText,
     Recipe (..),
     Dep (..),
     Attribute (..),
@@ -62,6 +63,15 @@ recipeCommand (RecipeName n) = T.pack justBin <> " --no-deps " <> n
 -- returns and the argument @just --no-deps@ accepts.
 newtype RecipeName = RecipeName Text
   deriving newtype (Show, Eq, Ord, IsString, Display, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
+
+-- | The single named entry point for callers that hold a 'Text' recipe
+-- identifier (e.g. the @name@ field of a 'CI.ProcessCompose.Events.ProcessState')
+-- and need to look it up in a map keyed by 'RecipeName'. Validation
+-- would live here if we added any — the round-trip via 'fromString' +
+-- 'T.unpack' that callers would otherwise reach for is both ugly and
+-- ambiguous about whether the conversion is total.
+recipeNameFromText :: Text -> RecipeName
+recipeNameFromText = RecipeName
 
 -- | One entry in a recipe's @dependencies@ array: the dep's target name
 -- plus any arguments passed at this call site (only non-empty when the

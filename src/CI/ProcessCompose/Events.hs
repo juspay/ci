@@ -17,6 +17,8 @@
 module CI.ProcessCompose.Events
   ( ProcessState (..),
     ProcessStatus (..),
+    TerminalStatus (..),
+    psToTerminalStatus,
     subscribeStates,
   )
 where
@@ -61,6 +63,33 @@ data ProcessState = ProcessState
   }
   deriving stock (Show, Generic)
   deriving anyclass (FromJSON)
+
+-- | The three terminal outcomes a process-compose run distinguishes.
+-- Both 'PsCompleted' with @exit_code == 0@ and @exit_code /= 0@ map
+-- here ('TsSucceeded' / 'TsFailed'); 'PsSkipped' and 'PsErrored' both
+-- collapse to 'TsSkipped' because pc reports a dependency-driven
+-- skip as @Skipped@ and a missed precondition as @Error@, and the
+-- pipeline can't distinguish them at this layer.
+--
+-- Owned here (rather than in "CI.CommitStatus" or "CI.Verdict") so
+-- both downstreams can derive their own vocabulary from the same
+-- base predicate. Keeps the GitHub-status mapping and the local
+-- verdict's outcome classification in agreement by construction
+-- without forcing either to import the other.
+data TerminalStatus = TsSucceeded | TsFailed | TsSkipped
+  deriving stock (Show, Eq, Bounded, Enum)
+
+-- | The single ground-truth classifier of a 'ProcessState' event into
+-- a terminal outcome. Non-terminal events ('PsRunning', 'PsOther')
+-- return 'Nothing'; downstreams add their own non-terminal handling
+-- ('CI.CommitStatus' posts @Pending@ on 'PsRunning', for example).
+psToTerminalStatus :: ProcessState -> Maybe TerminalStatus
+psToTerminalStatus ps = case (ps.status, ps.exit_code) of
+  (PsCompleted, 0) -> Just TsSucceeded
+  (PsCompleted, _) -> Just TsFailed
+  (PsSkipped, _) -> Just TsSkipped
+  (PsErrored, _) -> Just TsSkipped
+  _ -> Nothing
 
 -- | Mirrors process-compose's @ProcessStateEvent@ wire type. We model only
 -- the @state@ field; the @snapshot@ flag (true on initial replay, omitted

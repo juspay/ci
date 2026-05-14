@@ -102,10 +102,14 @@ data Condition
 instance ToJSON Condition where
   toJSON = genericToJSON snakeCaseTag
 
--- | Per-process failure policy. Both knobs are set explicitly: 'ExitOnFailure'
--- propagates a non-zero exit upward; 'exit_on_skipped' also tears down when a
--- dep is skipped (which would otherwise leave the pipeline hanging with no
--- failure signal at the parent).
+-- | Per-process failure policy. Both knobs are set explicitly so the
+-- value at every emission site shows the policy in full: 'RestartNo'
+-- lets a failed recipe stay failed without tearing the project down,
+-- and @exit_on_skipped = False@ keeps the same composure when a
+-- downstream recipe is skipped because its dep failed. The
+-- combination is what gives sibling lanes the freedom to keep running
+-- after one fails — verifying the cross-lane outcome is then the job
+-- of "CI.Verdict", not of process-compose's own exit code.
 data Availability = Availability
   { restart :: RestartPolicy,
     exit_on_skipped :: Bool
@@ -113,9 +117,12 @@ data Availability = Availability
   deriving stock (Generic)
   deriving anyclass (ToJSON)
 
--- | Restart strategy for a process. We only emit one variant today; the
--- closed sum keeps the choice explicit at the call site.
-data RestartPolicy = ExitOnFailure
+-- | Restart strategy for a process. We only emit 'No' today — "let the
+-- failure stick, surface it in the verdict" — but the closed sum
+-- names every value the wire format admits ('ExitOnFailure' would
+-- shut the whole project down on the first failure) so the choice
+-- stays type-safe at the emission site.
+data RestartPolicy = No | ExitOnFailure
   deriving stock (Generic)
 
 instance ToJSON RestartPolicy where
@@ -143,7 +150,7 @@ toProcessCompose workingDir mkCommand mkLogLocation g =
       Process
         { command = mkCommand recipe,
           depends_on = Map.fromSet (const (Dependency ProcessCompletedSuccessfully)) (G.postSet recipe g),
-          availability = Availability {restart = ExitOnFailure, exit_on_skipped = True},
+          availability = Availability {restart = No, exit_on_skipped = False},
           working_dir = workingDir,
           log_location = mkLogLocation recipe
         }
