@@ -117,13 +117,16 @@ withLogPath label logPath = label <> ": " <> T.pack logPath
 logPathFor :: Display a => FilePath -> a -> FilePath
 logPathFor logDir recipe = logDir </> T.unpack (display recipe) <> ".log"
 
--- | Compose the per-run log directory: @\<runRoot\>\/\<sha\>\/@. Lives
--- alongside 'logPathFor' so the full @.ci\/\<sha\>\/\<recipe\>.log@
--- convention (directory + filename) is owned by one module — a change
--- to the SHA-keying strategy (short sha, sha+timestamp, content hash)
--- edits one file rather than two.
-logDirFor :: FilePath -> Sha -> FilePath
-logDirFor runRoot sha = runRoot </> T.unpack (display sha)
+-- | Compose the per-run log directory: @.ci\/\<sha\>\/@. Returns a
+-- repo-relative path so the @description@ field on a GitHub commit
+-- status embeds something a contributor can paste straight into their
+-- own checkout — an absolute path would leak the runner's filesystem
+-- layout into the public PR. Lives alongside 'logPathFor' so the full
+-- @.ci\/\<sha\>\/\<recipe\>.log@ convention (directory + filename) is
+-- owned by one module — a change to the SHA-keying strategy (short
+-- sha, sha+timestamp, content hash) edits one file rather than two.
+logDirFor :: Sha -> FilePath
+logDirFor sha = ".ci" </> T.unpack (display sha)
 
 psToCommitStatus :: ProcessState -> Maybe CommitStatus
 psToCommitStatus ps = case (ps.status, ps.exit_code) of

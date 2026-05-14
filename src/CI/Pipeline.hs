@@ -33,12 +33,9 @@ import System.FilePath ((</>))
 -- | The runtime artifact paths under @\$PWD\/.ci\/@. Built once at the top
 -- of a run so 'runLocal' and 'runStrict' both reference the same
 -- convention instead of hand-rolling @runDir \<\/\> "pc.log"@ at each
--- call site. @runRoot@ is the @.ci\/@ directory itself; per-sha log
--- directories (@.ci\/\<sha\>\/@) are derived from it inside 'runStrict'
--- once the SHA is known.
+-- call site.
 data RunDir = RunDir
-  { runRoot :: FilePath,
-    worktreePath :: FilePath,
+  { worktreePath :: FilePath,
     sock :: FilePath,
     pcLog :: FilePath
   }
@@ -53,8 +50,7 @@ ensureRunDir = do
   createDirectoryIfMissing True dir
   pure
     RunDir
-      { runRoot = dir,
-        worktreePath = dir </> "worktree",
+      { worktreePath = dir </> "worktree",
         sock = dir </> "pc.sock",
         pcLog = dir </> "pc.log"
       }
@@ -84,7 +80,7 @@ runStrict dirs passthrough = do
   dieOnLeft =<< ensureCleanTree
   repo <- dieOnLeft =<< viewRepo
   sha <- dieOnLeft =<< resolveSha
-  let logDir = logDirFor dirs.runRoot sha
+  let logDir = logDirFor sha
   withSnapshotWorktree dirs.worktreePath $ do
     createDirectoryIfMissing True logDir
     pc <- buildProcessCompose (StrictRun dirs.worktreePath logDir)
