@@ -206,7 +206,7 @@ buildProcessCompose mode = do
         Nothing -> die $ "internal error: root " <> T.unpack (display rootName) <> " missing from recipe map"
     reachable <- dieOnLeft $ reachableSubgraph rootName recipes
     recipeGraph <- dieOnLeft $ lowerToRunnerGraph reachable
-    localPlat <- dieOnLeft =<< localPlatform
+    localPlat <- dieOnLeft localPlatform
     let pipelinePlatforms = pipelinePlatformsFor rootRecipe localPlat
         nodeGraph = fanOut pipelinePlatforms recipeGraph
         hasRemote = any (/= localPlat) pipelinePlatforms

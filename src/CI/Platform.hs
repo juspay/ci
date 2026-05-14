@@ -88,17 +88,16 @@ instance Display LocalPlatformError where
 
 {- | Classify the running host into a 'Platform'. Reads
 'System.Info.os' (compiled into the binary by GHC, no shell-out);
-maps @"linux"@ to 'Linux' and @"darwin"@ to 'Macos'. Pure outside
-the result: there's no environment-variable override, so two
-invocations on the same machine always agree.
+maps @"linux"@ to 'Linux' and @"darwin"@ to 'Macos'.
 
-'IO'-typed for symmetry with the other IO-resolving entry points
-('viewRepo', 'resolveSha'), even though no actual IO is performed.
-Threading a value through the pipeline builder is simpler than
-branching on whether the source needed IO.
+Pure: 'System.Info.os' is a compile-time constant baked in by GHC,
+so this is a 'Either', not an 'IO Either'. The earlier 'IO' wrapper
+was cosmetic ("symmetry with other resolvers") and forced every
+caller into '<<=' threading for no runtime gain; readers of the
+type now see the truth (no effects, two invocations always agree).
 -}
-localPlatform :: IO (Either LocalPlatformError Platform)
-localPlatform = pure $ case System.Info.os of
+localPlatform :: Either LocalPlatformError Platform
+localPlatform = case System.Info.os of
     "linux" -> Right Linux
     "darwin" -> Right Macos
     other -> Left (LocalPlatformError other)
