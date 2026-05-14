@@ -69,7 +69,13 @@ data Process = Process
     -- directory before executing 'command'. Used in strict mode to pin
     -- every recipe to an immutable @git worktree@ snapshot of HEAD.
     -- 'Nothing' omits the field from the YAML so dev runs are unchanged.
-    working_dir :: Maybe FilePath
+    working_dir :: Maybe FilePath,
+    -- | When set, process-compose routes this process's stdout/stderr to
+    -- the given file instead of the global @-L@ log. Used in strict mode
+    -- to split per-recipe output into @.ci\/\<sha\>\/\<recipe\>.log@ so
+    -- the GitHub commit status can embed a navigable path to the failing
+    -- log. 'Nothing' falls back to the global log.
+    log_location :: Maybe FilePath
   }
   deriving stock (Generic)
 
@@ -116,15 +122,21 @@ instance ToJSON RestartPolicy where
   toJSON = genericToJSON snakeCaseTag
 
 -- | Assemble a @process-compose@ config from a pre-validated execution graph.
--- The caller supplies @mkCommand@, the shell command emitted for each
--- vertex, and @workingDir@, the directory every recipe is @chdir@'d into
--- (or 'Nothing' to leave the field off and let process-compose use its
--- caller's cwd). Each outgoing edge becomes a @depends_on@ entry. Keeping
--- both decisions out of this module lets callers vary how vertices are
--- invoked and where they execute without the YAML emitter knowing about
--- any of those policies.
-toProcessCompose :: Maybe FilePath -> (RecipeName -> Text) -> G.AdjacencyMap RecipeName -> ProcessCompose
-toProcessCompose workingDir mkCommand g =
+-- The caller supplies @mkCommand@ (the shell command emitted for each
+-- vertex), @mkLogLocation@ (the per-process log path, or 'Nothing' to fall
+-- back to the global log), and @workingDir@ (the directory every recipe
+-- is @chdir@'d into, or 'Nothing' to leave it unset). Each outgoing edge
+-- becomes a @depends_on@ entry. Keeping these policy decisions out of
+-- this module lets callers vary how vertices are invoked, where they
+-- execute, and where their output lands without the YAML emitter knowing
+-- about any of those choices.
+toProcessCompose ::
+  Maybe FilePath ->
+  (RecipeName -> Text) ->
+  (RecipeName -> Maybe FilePath) ->
+  G.AdjacencyMap RecipeName ->
+  ProcessCompose
+toProcessCompose workingDir mkCommand mkLogLocation g =
   ProcessCompose $ Map.fromSet mkProcess (G.vertexSet g)
   where
     mkProcess recipe =
@@ -132,7 +144,8 @@ toProcessCompose workingDir mkCommand g =
         { command = mkCommand recipe,
           depends_on = Map.fromSet (const (Dependency ProcessCompletedSuccessfully)) (G.postSet recipe g),
           availability = Availability {restart = ExitOnFailure, exit_on_skipped = True},
-          working_dir = workingDir
+          working_dir = workingDir,
+          log_location = mkLogLocation recipe
         }
 
 -- | The set of recipe names in a 'ProcessCompose'. Returned in 'Map' key

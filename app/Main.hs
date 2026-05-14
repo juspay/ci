@@ -43,7 +43,7 @@ main = do
         then runStrict dirs passthrough
         else runLocal dirs passthrough
     DumpYaml -> do
-      pc <- buildProcessCompose Nothing
+      pc <- buildProcessCompose Nothing Nothing
       BS.putStr (Y.encode pc)
 
 parserInfo :: ParserInfo Command

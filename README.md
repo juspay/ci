@@ -15,9 +15,9 @@ Gated on the `CI` environment variable:
 | Mode | Trigger | Tree | Status posts | Runtime files |
 |---|---|---|---|---|
 | Local | `CI` unset | live working tree | none | `.ci/pc.log`, `.ci/pc.sock` |
-| Strict | `CI=true` | `git worktree` pinned to HEAD | `ci/<recipe>` per transition | `.ci/pc.log`, `.ci/pc.sock`, `.ci/worktree/` |
+| Strict | `CI=true` | `git worktree` pinned to HEAD | `ci/<recipe>` per transition | `.ci/pc.log`, `.ci/pc.sock`, `.ci/worktree/`, `.ci/<sha>/<recipe>.log` |
 
-Strict mode refuses to run if the working tree is dirty — the SHA on the green check must exactly match the bytes tested. A central observer subscribes to process-compose's `/process/states/ws` stream over a Unix domain socket and posts a status (`pending`, then `success`/`failure`, or `error` for skipped recipes) for every state transition. All runtime artifacts live under `$PWD/.ci/` (gitignored); process-compose binds the same UDS in both modes, so two concurrent ci runs in the same checkout collide on the socket and the second fails fast — the intended mutex.
+Strict mode refuses to run if the working tree is dirty — the SHA on the green check must exactly match the bytes tested. A central observer subscribes to process-compose's `/process/states/ws` stream over a Unix domain socket and posts a status (`pending`, then `success`/`failure`, or `error` for skipped recipes) for every state transition. Each recipe's stdout/stderr is split into its own `.ci/<sha>/<recipe>.log`, and the GitHub status `description` embeds that path — so a red check links straight to the failing log. The SHA-keyed directory keeps prior runs' logs alongside the latest. All runtime artifacts live under `$PWD/.ci/` (gitignored); process-compose binds the same UDS in both modes, so two concurrent ci runs in the same checkout collide on the socket and the second fails fast — the intended mutex.
 
 ## Subcommands
 
