@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
@@ -16,12 +17,7 @@
 -- subscribe via 'subscribeStates'.
 module CI.ProcessCompose
   ( -- * Output schema (YAML config)
-    ProcessCompose (..),
-    Process (..),
-    Dependency (..),
-    Condition (..),
-    Availability (..),
-    RestartPolicy (..),
+    ProcessCompose,
     toProcessCompose,
 
     -- * Subscription (event stream from a running pc)
@@ -39,7 +35,7 @@ where
 import qualified Algebra.Graph.AdjacencyMap as G
 import CI.Justfile (RecipeName)
 import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, try)
+import Control.Exception (IOException, SomeException, try)
 import Data.Aeson (FromJSON (parseJSON), ToJSON (..), camelTo2, defaultOptions, eitherDecodeStrict, genericToJSON, withText)
 import Data.Aeson.Types (Options (..))
 import qualified Data.ByteString as BS
@@ -50,7 +46,6 @@ import qualified Data.Yaml as Y
 import GHC.Generics (Generic)
 import qualified Network.Socket as S
 import qualified Network.WebSockets as WS
-import System.Directory (doesPathExist)
 import System.Exit (ExitCode, die)
 import System.IO (hClose, hPutStrLn, stderr)
 import System.Process (CreateProcess (..), StdStream (..), proc, waitForProcess, withCreateProcess)
@@ -58,7 +53,7 @@ import System.Which (staticWhich)
 
 -- | Absolute path to the @process-compose@ binary, baked in at compile time
 -- via Nix (see @settings.ci.extraBuildTools@ in @flake.nix@). Not exported:
--- the only spawn site is 'runPipeline' below.
+-- the only spawn site is 'runProcessCompose' below.
 processComposeBin :: FilePath
 processComposeBin = $(staticWhich "process-compose")
 
@@ -216,7 +211,7 @@ data UpInvocation = UpInvocation
 -- | Translate an 'UpInvocation' into the argv vector for @process-compose@.
 -- The YAML config is read from stdin (@-f /dev/stdin@) so it's not part of
 -- the args. TUI is disabled (@-t=false@) unconditionally — there is only
--- one caller ('runPipeline') and it never wants TUI.
+-- one caller ('runProcessCompose') and it never wants TUI.
 toUpArgs :: UpInvocation -> [String]
 toUpArgs up =
   ["up", "-f", "/dev/stdin", "-t=false", "-L", up.logFile] <> serverArgs up.server <> up.extraArgs
@@ -242,8 +237,8 @@ runProcessCompose up pc =
 -- | Subscribe to a running process-compose's @\/process\/states\/ws@
 -- WebSocket stream over the UDS at @sockPath@. Decode each frame and
 -- hand the inner 'ProcessState' to the callback. Blocks until the
--- WebSocket closes (i.e. process-compose exits). Polls the socket path
--- until it appears, so callers can launch this concurrently with
+-- WebSocket closes (i.e. process-compose exits). Retries the connect up
+-- to ~10s so callers can launch this concurrently with
 -- 'runProcessCompose' without ordering the spawn against socket
 -- creation.
 --
@@ -252,11 +247,8 @@ runProcessCompose up pc =
 -- to stderr and (for decode failures) skipped — the loop continues.
 subscribeStates :: FilePath -> (ProcessState -> IO ()) -> IO ()
 subscribeStates sockPath onState = do
-  hPutStrLn stderr $ "observer: waiting for " <> sockPath
-  waitForSocket sockPath
-  hPutStrLn stderr "observer: connecting"
-  sock <- S.socket S.AF_UNIX S.Stream S.defaultProtocol
-  S.connect sock (S.SockAddrUnix sockPath)
+  hPutStrLn stderr $ "observer: connecting to " <> sockPath
+  sock <- connectWithRetry sockPath
   WS.runClientWithSocket sock "localhost" "/process/states/ws" WS.defaultConnectionOptions [] $ \conn -> do
     hPutStrLn stderr "observer: connected, streaming events"
     loop conn
@@ -272,17 +264,20 @@ subscribeStates sockPath onState = do
             Right ev -> onState ev.state
           loop conn
 
--- | Block (with a 100-attempt × 100ms backoff = ~10s ceiling) until the UDS
--- path exists on disk. Process-compose can take a couple of seconds to
--- create the socket during startup; if we still don't see it after 10s,
--- log the timeout explicitly — the next 'S.connect' call will then fail
--- with ENOENT, but at least the user sees why.
-waitForSocket :: FilePath -> IO ()
-waitForSocket path = go (100 :: Int)
+-- | Connect to a UDS, retrying with 100ms backoff up to ~10s. The socket
+-- may not exist yet at startup (process-compose creates it a beat after
+-- spawn); any 'IOException' from @connect@ — including ENOENT for the
+-- not-yet-created path — triggers a retry. After the ceiling, the final
+-- exception propagates so the caller (and 'link') sees it.
+connectWithRetry :: FilePath -> IO S.Socket
+connectWithRetry sockPath = go (100 :: Int)
   where
-    go 0 = hPutStrLn stderr $ "observer: timed out waiting 10s for " <> path
-    go n = do
-      exists <- doesPathExist path
-      if exists
-        then pure ()
-        else threadDelay 100_000 >> go (n - 1)
+    go 0 = attempt
+    go n =
+      try attempt >>= \case
+        Right sock -> pure sock
+        Left (_ :: IOException) -> threadDelay 100_000 >> go (n - 1)
+    attempt = do
+      sock <- S.socket S.AF_UNIX S.Stream S.defaultProtocol
+      S.connect sock (S.SockAddrUnix sockPath)
+      pure sock

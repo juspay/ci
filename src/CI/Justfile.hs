@@ -17,10 +17,9 @@ module CI.Justfile
     Recipe (..),
     Dep (..),
     Attribute (..),
-    Os (..),
 
     -- * Operations
-    FetchError (..),
+    FetchError,
     fetchDump,
     recipeCommand,
   )
@@ -55,10 +54,7 @@ recipeCommand (RecipeName n) = T.pack justBin <> " --no-deps " <> n
 
 -- | The identifier of a recipe, as it appears in a justfile and as a key in @just --dump@'s @recipes@ map.
 newtype RecipeName = RecipeName Text
-  deriving newtype (Show, Eq, Ord, IsString, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
-
-instance Display RecipeName where
-  displayBuilder (RecipeName t) = displayBuilder t
+  deriving newtype (Show, Eq, Ord, IsString, Display, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 
 -- | One entry in a recipe's @dependencies@ array: the dep's target name plus any arguments passed at this call site (only non-empty when the target is parameterized).
 data Dep = Dep

@@ -19,7 +19,7 @@ module CI.Gh
     CommitStatusPost (..),
 
     -- * Operations
-    GhError (..),
+    GhError,
     viewRepo,
     contextFrom,
     postCommitStatus,

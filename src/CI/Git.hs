@@ -12,7 +12,7 @@ module CI.Git
     Sha,
 
     -- * Operations
-    CleanTreeError (..),
+    CleanTreeError,
     ensureCleanTree,
     resolveSha,
     withSnapshotWorktree,

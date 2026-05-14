@@ -10,7 +10,7 @@
 -- can evolve (e.g. CLI override, config file, well-known name) without any
 -- corresponding change to how @just --dump@ output is parsed.
 module CI.Entrypoint
-  ( EntrypointError (..),
+  ( EntrypointError,
     findEntrypoint,
   )
 where
