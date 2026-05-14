@@ -14,7 +14,7 @@ module CI.Pipeline
   )
 where
 
-import CI.CommitStatus (logPathFor, postStatusFor, seedPending)
+import CI.CommitStatus (logDirFor, logPathFor, postStatusFor, seedPending)
 import CI.Root (findRoot)
 import CI.Gh (viewRepo)
 import CI.Git (ensureCleanTree, resolveSha, withSnapshotWorktree)
@@ -83,7 +83,7 @@ runStrict dirs passthrough = do
   dieOnLeft =<< ensureCleanTree
   repo <- dieOnLeft =<< viewRepo
   sha <- dieOnLeft =<< resolveSha
-  let logDir = dirs.runRoot </> T.unpack (display sha)
+  let logDir = logDirFor dirs.runRoot sha
   createDirectoryIfMissing True logDir
   withSnapshotWorktree dirs.worktreePath $ do
     pc <- buildProcessCompose (Just dirs.worktreePath) (Just logDir)

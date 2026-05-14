@@ -8,7 +8,7 @@
 -- encoding of each state, and the form-field names are gh-API details
 -- owned by "CI.Gh". Multi-platform may eventually require a
 -- @\<system\>\/\<recipe\>@ shape (see [#14](https://github.com/juspay/ci/issues/14)).
-module CI.CommitStatus (postStatusFor, seedPending, logPathFor) where
+module CI.CommitStatus (postStatusFor, seedPending, logDirFor, logPathFor) where
 
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
 import CI.Git (Sha)
@@ -102,6 +102,14 @@ describe cs logPath = stateLabel cs <> ": " <> T.pack logPath
 -- side lives in 'CI.Pipeline.mkLogLocation'.
 logPathFor :: Display a => FilePath -> a -> FilePath
 logPathFor logDir recipe = logDir </> T.unpack (display recipe) <> ".log"
+
+-- | Compose the per-run log directory: @\<runRoot\>\/\<sha\>\/@. Lives
+-- alongside 'logPathFor' so the full @.ci\/\<sha\>\/\<recipe\>.log@
+-- convention (directory + filename) is owned by one module — a change
+-- to the SHA-keying strategy (short sha, sha+timestamp, content hash)
+-- edits one file rather than two.
+logDirFor :: FilePath -> Sha -> FilePath
+logDirFor runRoot sha = runRoot </> T.unpack (display sha)
 
 psToCommitStatus :: ProcessState -> Maybe CommitStatus
 psToCommitStatus ps = case (ps.status, ps.exit_code) of
