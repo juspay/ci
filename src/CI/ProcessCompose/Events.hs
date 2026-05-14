@@ -84,7 +84,7 @@ data TerminalStatus = TsSucceeded | TsFailed | TsSkipped
 -- return 'Nothing'; downstreams add their own non-terminal handling
 -- ('CI.CommitStatus' posts @Pending@ on 'PsRunning', for example).
 psToTerminalStatus :: ProcessState -> Maybe TerminalStatus
-psToTerminalStatus ps = case (status ps, exit_code ps) of
+psToTerminalStatus ps = case (ps.status, ps.exit_code) of
   (PsCompleted, 0) -> Just TsSucceeded
   (PsCompleted, _) -> Just TsFailed
   (PsSkipped, _) -> Just TsSkipped
