@@ -24,7 +24,7 @@ import CI.Justfile (fetchDump, recipeCommand)
 import CI.LogPath (logDirFor, logPathFor)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (subscribeStates)
-import CI.Verdict (newOutcomes, readOutcomes, recordOutcome, runVerdictFrom)
+import CI.Verdict (newOutcomes, readOutcomes, recordOutcome, verdictCode, verdictSummary)
 import Control.Concurrent.Async (link, wait, withAsync)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -73,9 +73,9 @@ runLocal dirs passthrough = do
     link obs
     _ <- runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
     wait obs
-    (code, ls) <- runVerdictFrom <$> readOutcomes outcomes
-    mapM_ TIO.putStrLn ls
-    exitWith code
+    o <- readOutcomes outcomes
+    mapM_ TIO.putStrLn (verdictSummary o)
+    exitWith (verdictCode o)
 
 -- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
 -- via @git worktree@ at @.ci\/worktree@ → start process-compose with its
@@ -101,7 +101,7 @@ runLocal dirs passthrough = do
 -- @restart: no@ on every process it no longer reflects pipeline
 -- outcome (a failed recipe leaves pc exiting 0). The accumulated
 -- outcome map is the source of truth; the final 'ExitCode' is
--- derived from it by 'runVerdictFrom'.
+-- derived from it by 'verdictCode'.
 runStrict :: RunDir -> [String] -> IO ()
 runStrict dirs passthrough = do
   dieOnLeft =<< ensureCleanTree
@@ -122,9 +122,9 @@ runStrict dirs passthrough = do
       link obs
       _ <- runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
       wait obs
-      (code, ls) <- runVerdictFrom <$> readOutcomes outcomes
-      mapM_ TIO.putStrLn ls
-      exitWith code
+      o <- readOutcomes outcomes
+      mapM_ TIO.putStrLn (verdictSummary o)
+      exitWith (verdictCode o)
 
 -- | The two pipeline-build modes. 'LocalRun' is the @dev@ / @dump-yaml@
 -- shape: no worktree pin, no per-recipe log routing. 'StrictRun'

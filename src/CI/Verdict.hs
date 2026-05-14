@@ -5,8 +5,8 @@
 -- | Per-run outcome accumulator and end-of-run verdict. The observer
 -- thread folds every terminal 'ProcessState' into an in-memory
 -- 'Outcomes' map (keyed by recipe name); after process-compose exits,
--- the orchestrator calls 'runVerdictFrom' on the map to derive the
--- pipeline's overall 'ExitCode' and a printable summary.
+-- the orchestrator calls 'verdictCode' on the map for the pipeline's
+-- overall 'ExitCode' and 'verdictSummary' for the printable summary.
 --
 -- 'RecipeOutcome' is local to this module: it's the verdict's
 -- vocabulary, distinct from GitHub's 'CI.Gh.CommitStatus' (which has
@@ -21,7 +21,8 @@ module CI.Verdict
     newOutcomes,
     recordOutcome,
     readOutcomes,
-    runVerdictFrom,
+    verdictCode,
+    verdictSummary,
     terminalToOutcome,
   )
 where
@@ -63,8 +64,8 @@ newtype Outcomes = Outcomes (IORef (Map RecipeName RecipeOutcome))
 -- in the lowered pipeline. Without this, a recipe that pc never emits
 -- a state event for (e.g. pc crashed before scheduling it) would be
 -- absent from the final map entirely; with it, missing-from-pc
--- surfaces as a lingering 'Unreported', which 'runVerdictFrom' treats
--- as a non-success and rolls into a non-zero exit.
+-- surfaces as a lingering 'Unreported', which 'verdictCode' treats as
+-- a non-success and rolls into a non-zero exit.
 newOutcomes :: [RecipeName] -> IO Outcomes
 newOutcomes recipes =
   Outcomes <$> newIORef (Map.fromList [(r, Unreported) | r <- recipes])
@@ -104,33 +105,34 @@ terminalToOutcome TsSkipped = Skipped
 readOutcomes :: Outcomes -> IO (Map RecipeName RecipeOutcome)
 readOutcomes (Outcomes ref) = readIORef ref
 
--- | Derive the pipeline's exit code and a printable summary from the
--- accumulated outcomes. The exit code is 0 iff every recipe finished
--- 'Succeeded'; anything else — 'Failed', 'Skipped', or a lingering
--- 'Unreported' — flips it to 'ExitFailure' 1.
---
--- Pure: the 'IORef' read happens in the caller; this function takes a
--- snapshot map and is trivial to test against handcrafted inputs.
-runVerdictFrom :: Map RecipeName RecipeOutcome -> (ExitCode, [Text])
-runVerdictFrom outcomes = (code, summaryLines)
+-- | The pipeline's exit code: 'ExitSuccess' iff every recipe in the
+-- snapshot finished 'Succeeded'; anything else — 'Failed', 'Skipped',
+-- or a lingering 'Unreported' — flips it to 'ExitFailure' 1. Pure;
+-- trivial to test against handcrafted maps.
+verdictCode :: Map RecipeName RecipeOutcome -> ExitCode
+verdictCode outcomes
+  | all (== Succeeded) (Map.elems outcomes) = ExitSuccess
+  | otherwise = ExitFailure 1
+
+-- | The pipeline's printable per-recipe summary: a header, one
+-- column-aligned line per recipe, a divider, and a one-line verdict
+-- count. Pure; companion to 'verdictCode' over the same snapshot.
+verdictSummary :: Map RecipeName RecipeOutcome -> [Text]
+verdictSummary outcomes =
+  ["── ci run summary ─────────────────────────────"]
+    <> map recipeLine entries
+    <> ["───────────────────────────────────────────────", verdictLine]
   where
     entries = [(display r, o) | (r, o) <- Map.toAscList outcomes]
-    failed = filter ((/= Succeeded) . snd) entries
-    code
-      | null failed = ExitSuccess
-      | otherwise = ExitFailure 1
+    failedCount = length (filter ((/= Succeeded) . snd) entries)
     width = maximum (0 : map (T.length . fst) entries)
     pad n = n <> T.replicate (width - T.length n) " "
     recipeLine (n, o) = "  " <> pad n <> "  " <> display o
     verdictLine
-      | null failed = "all " <> tshow (length entries) <> " recipes succeeded"
+      | failedCount == 0 = "all " <> tshow (length entries) <> " recipes succeeded"
       | otherwise =
-          tshow (length failed)
+          tshow failedCount
             <> " of "
             <> tshow (length entries)
             <> " recipes did not succeed"
-    summaryLines =
-      ["── ci run summary ─────────────────────────────"]
-        <> map recipeLine entries
-        <> ["───────────────────────────────────────────────", verdictLine]
     tshow = T.pack . show
