@@ -7,6 +7,7 @@
 -- shaped lives here.
 module CI.Pipeline
   ( RunDir (..),
+    RunMode (..),
     ensureRunDir,
     runLocal,
     runStrict,
@@ -65,7 +66,7 @@ ensureRunDir = do
 -- server).
 runLocal :: RunDir -> [String] -> IO ()
 runLocal dirs passthrough = do
-  pc <- buildProcessCompose Nothing Nothing
+  pc <- buildProcessCompose LocalRun
   runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc >>= exitWith
 
 -- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
@@ -86,7 +87,7 @@ runStrict dirs passthrough = do
   let logDir = logDirFor dirs.runRoot sha
   createDirectoryIfMissing True logDir
   withSnapshotWorktree dirs.worktreePath $ do
-    pc <- buildProcessCompose (Just dirs.worktreePath) (Just logDir)
+    pc <- buildProcessCompose (StrictRun dirs.worktreePath logDir)
     seedPending repo sha logDir (processNames pc)
     withAsync (subscribeStates dirs.sock (postStatusFor repo sha logDir)) $ \obs -> do
       -- 'link' propagates an observer crash to this thread, so any path
@@ -97,18 +98,30 @@ runStrict dirs passthrough = do
       wait obs
       exitWith ec
 
+-- | The two pipeline-build modes. 'LocalRun' is the @dev@ / @dump-yaml@
+-- shape: no worktree pin, no per-recipe log routing. 'StrictRun'
+-- carries the two paths that always travel together — the @git
+-- worktree@ snapshot every recipe @chdir@s into, and the
+-- @.ci\/\<sha\>\/@ log directory the YAML emitter routes each
+-- process's stdout/stderr to. A sum type instead of two parallel
+-- @Maybe FilePath@s rules out the mixed @(Just, Nothing)@ /
+-- @(Nothing, Just)@ states that produce logically inconsistent YAML.
+data RunMode
+  = LocalRun
+  | -- | @StrictRun worktreeDir logDir@.
+    StrictRun FilePath FilePath
+
 -- | Walk @just --dump@ → root → reachable subgraph → topologically
--- lowered DAG → 'ProcessCompose' YAML. @workingDir@ is set in strict
--- mode (every recipe @chdir@s into the worktree snapshot); 'Nothing' in
--- local mode and for @dump-yaml@. @logDir@ is set in strict mode (each
--- recipe writes to @\<logDir\>\/\<recipe\>.log@); 'Nothing' falls back
--- to process-compose's global @-L@ log.
-buildProcessCompose :: Maybe FilePath -> Maybe FilePath -> IO ProcessCompose
-buildProcessCompose workingDir logDir = do
+-- lowered DAG → 'ProcessCompose' YAML, parameterised by the run mode.
+buildProcessCompose :: RunMode -> IO ProcessCompose
+buildProcessCompose mode = do
   recipes <- dieOnLeft =<< fetchDump
   root <- dieOnLeft $ findRoot recipes
   reachable <- dieOnLeft $ reachableSubgraph root recipes
   graph <- dieOnLeft $ lowerToRunnerGraph reachable
+  let (workingDir, logDir) = case mode of
+        LocalRun -> (Nothing, Nothing)
+        StrictRun wt ld -> (Just wt, Just ld)
   pure $ toProcessCompose workingDir recipeCommand (mkLogLocation logDir) graph
 
 -- | Per-recipe log file path: @\<logDir\>\/\<recipe\>.log@ when a log
