@@ -15,6 +15,7 @@ module CI.ProcessCompose
   ( -- * Output schema (YAML config)
     ProcessCompose,
     toProcessCompose,
+    processNames,
 
     -- * Invocation
     UpInvocation (..),
@@ -134,6 +135,13 @@ toProcessCompose workingDir mkCommand g =
           availability = Availability {restart = ExitOnFailure, exit_on_skipped = True},
           working_dir = workingDir
         }
+
+-- | The set of recipe names in a 'ProcessCompose'. Returned in 'Map' key
+-- order so iteration is stable. Useful for pre-seeding per-recipe state
+-- at startup (e.g. posting @pending@ commit statuses for every recipe
+-- before process-compose has begun scheduling them).
+processNames :: ProcessCompose -> [RecipeName]
+processNames (ProcessCompose ps) = Map.keys ps
 
 -- | Selects how process-compose's HTTP API surface is exposed (or not).
 -- 'NoServer' suppresses the API entirely — used for local-mode dev runs

@@ -14,13 +14,13 @@ module CI.Pipeline
   )
 where
 
-import CI.CommitStatus (postStatusFor)
+import CI.CommitStatus (postStatusFor, seedPending)
 import CI.Entrypoint (findEntrypoint)
 import CI.Gh (viewRepo)
 import CI.Git (ensureCleanTree, resolveSha, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (fetchDump, recipeCommand)
-import CI.ProcessCompose (ProcessCompose, ServerMode (..), UpInvocation (..), runProcessCompose, toProcessCompose)
+import CI.ProcessCompose (ProcessCompose, ServerMode (..), UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (subscribeStates)
 import Control.Concurrent.Async (link, wait, withAsync)
 import qualified Data.Text as T
@@ -67,6 +67,7 @@ runStrict dirs extra = do
   sha <- dieOnLeft =<< resolveSha
   withSnapshotWorktree dirs.snap $ do
     pc <- buildProcessCompose (Just dirs.snap)
+    seedPending repo sha (processNames pc)
     withAsync (subscribeStates dirs.sock (postStatusFor repo sha)) $ \obs -> do
       -- 'link' propagates an observer crash to this thread, so any path
       -- past 'wait' below is a clean WebSocket close (process-compose

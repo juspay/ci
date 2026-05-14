@@ -7,11 +7,13 @@
 -- human-readable description per state. The endpoint URL, the wire
 -- encoding of each state, and the form-field names are gh-API details
 -- owned by "CI.Gh".
-module CI.CommitStatus (postStatusFor) where
+module CI.CommitStatus (postStatusFor, seedPending) where
 
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
 import CI.Git (Sha)
+import CI.Justfile (RecipeName)
 import CI.ProcessCompose.Events (ProcessState (..), ProcessStatus (..))
+import Control.Concurrent.Async (forConcurrently_)
 import Data.Foldable (for_)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -36,14 +38,38 @@ import System.IO (hPutStrLn, stderr)
 -- status post succeeded.
 postStatusFor :: Repo -> Sha -> ProcessState -> IO ()
 postStatusFor repo sha ps =
-  for_ (psToCommitStatus ps) $ \cs -> do
-    let ctx = mkContext ps.name
-        post = CommitStatusPost {state = cs, context = ctx, description = describe cs}
-    result <- postCommitStatus repo sha post
-    let line = "gh: " <> T.unpack (display ctx) <> " " <> T.unpack (display cs)
-    case result of
-      Right () -> hPutStrLn stderr line
-      Left e -> hPutStrLn stderr $ line <> " FAILED: " <> T.unpack (display e)
+  for_ (psToCommitStatus ps) $ \cs ->
+    postOne repo sha ps.name cs (describe cs)
+
+-- | Pre-seed every recipe with a 'Pending' commit status at startup —
+-- one parallel @gh api@ POST per recipe, all joined before this returns.
+-- The PR's checks panel shows the full set of expected checks the moment
+-- the pipeline begins, instead of materializing them one at a time as
+-- recipes start. Skipped recipes (whose dep failed) get their @pending@
+-- overwritten by @error@ when 'postStatusFor' fires; recipes that never
+-- run at all stay at @pending@, which surfaces as a visible "why is
+-- this still pending?" signal rather than silent absence.
+--
+-- GitHub has no batch endpoint for commit statuses
+-- (see <https://docs.github.com/en/rest/commits/statuses>), so this is
+-- N parallel single-status POSTs. 'forConcurrently_' joins all of them
+-- before returning, so the caller can rely on every seed being in place
+-- before the pipeline kicks off.
+seedPending :: Repo -> Sha -> [RecipeName] -> IO ()
+seedPending repo sha recipes =
+  forConcurrently_ recipes $ \r -> postOne repo sha r Pending "Queued"
+
+-- | Issue one commit-status POST with a caller-supplied description and
+-- log the outcome.
+postOne :: Display a => Repo -> Sha -> a -> CommitStatus -> Text -> IO ()
+postOne repo sha recipe cs desc = do
+  let ctx = mkContext recipe
+      post = CommitStatusPost {state = cs, context = ctx, description = desc}
+  result <- postCommitStatus repo sha post
+  let line = "gh: " <> T.unpack (display ctx) <> " " <> T.unpack (display cs)
+  case result of
+    Right () -> hPutStrLn stderr line
+    Left e -> hPutStrLn stderr $ line <> " FAILED: " <> T.unpack (display e)
 
 -- | The single source of truth for status-check context names: @ci/\<recipe\>@.
 mkContext :: Display a => a -> Context
