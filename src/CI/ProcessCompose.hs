@@ -1,15 +1,19 @@
 {-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE DerivingStrategies #-}
+{-# LANGUAGE NumericUnderscores #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE TypeApplications #-}
 
 -- | Everything tied to the @process-compose@ binary: the YAML config we
--- emit, the WebSocket events we decode from @/process/states/ws@, the
--- @up@-invocation argv, and the spawn-and-wait operation itself. The
--- binary path and argv builder are internal — callers run the pipeline
--- via 'runPipeline'.
+-- emit, the @up@-invocation argv, the spawn-and-wait operation, and the
+-- WebSocket-over-UDS subscription that streams state-transition events
+-- from a running instance. The binary path, argv builder, and wire-level
+-- WS plumbing are internal — callers spawn via 'runProcessCompose' and
+-- subscribe via 'subscribeStates'.
 module CI.ProcessCompose
   ( -- * Output schema (YAML config)
     ProcessCompose (..),
@@ -20,10 +24,10 @@ module CI.ProcessCompose
     RestartPolicy (..),
     toProcessCompose,
 
-    -- * Input schema (WebSocket events)
+    -- * Subscription (event stream from a running pc)
     ProcessState (..),
     ProcessStatus (..),
-    ProcessStateEvent (..),
+    subscribeStates,
 
     -- * Invocation
     UpInvocation (..),
@@ -34,16 +38,21 @@ where
 
 import qualified Algebra.Graph.AdjacencyMap as G
 import CI.Justfile (RecipeName)
-import Data.Aeson (FromJSON (parseJSON), ToJSON (..), camelTo2, defaultOptions, genericToJSON, withText)
+import Control.Concurrent (threadDelay)
+import Control.Exception (SomeException, try)
+import Data.Aeson (FromJSON (parseJSON), ToJSON (..), camelTo2, defaultOptions, eitherDecodeStrict, genericToJSON, withText)
 import Data.Aeson.Types (Options (..))
 import qualified Data.ByteString as BS
+import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
-import qualified Data.Text as T
 import qualified Data.Yaml as Y
 import GHC.Generics (Generic)
+import qualified Network.Socket as S
+import qualified Network.WebSockets as WS
+import System.Directory (doesPathExist)
 import System.Exit (ExitCode, die)
-import System.IO (hClose)
+import System.IO (hClose, hPutStrLn, stderr)
 import System.Process (CreateProcess (..), StdStream (..), proc, waitForProcess, withCreateProcess)
 import System.Which (staticWhich)
 
@@ -229,3 +238,51 @@ runProcessCompose up pc =
       waitForProcess ph
   where
     cp = (proc processComposeBin (toUpArgs up)) {std_in = CreatePipe}
+
+-- | Subscribe to a running process-compose's @\/process\/states\/ws@
+-- WebSocket stream over the UDS at @sockPath@. Decode each frame and
+-- hand the inner 'ProcessState' to the callback. Blocks until the
+-- WebSocket closes (i.e. process-compose exits). Polls the socket path
+-- until it appears, so callers can launch this concurrently with
+-- 'runProcessCompose' without ordering the spawn against socket
+-- creation.
+--
+-- The callback runs in the event-loop thread; fork inside if you need
+-- to do slow work. Decode failures and stream-end exceptions are logged
+-- to stderr and (for decode failures) skipped — the loop continues.
+subscribeStates :: FilePath -> (ProcessState -> IO ()) -> IO ()
+subscribeStates sockPath onState = do
+  hPutStrLn stderr $ "observer: waiting for " <> sockPath
+  waitForSocket sockPath
+  hPutStrLn stderr "observer: connecting"
+  sock <- S.socket S.AF_UNIX S.Stream S.defaultProtocol
+  S.connect sock (S.SockAddrUnix sockPath)
+  WS.runClientWithSocket sock "localhost" "/process/states/ws" WS.defaultConnectionOptions [] $ \conn -> do
+    hPutStrLn stderr "observer: connected, streaming events"
+    loop conn
+  where
+    loop conn = do
+      result <- try (WS.receiveData conn)
+      case result of
+        Left (e :: SomeException) ->
+          hPutStrLn stderr $ "observer: stream ended (" <> show e <> ")"
+        Right (bs :: BSL.ByteString) -> do
+          case eitherDecodeStrict @ProcessStateEvent (BSL.toStrict bs) of
+            Left err -> hPutStrLn stderr $ "observer: decode error: " <> err
+            Right ev -> onState ev.state
+          loop conn
+
+-- | Block (with a 100-attempt × 100ms backoff = ~10s ceiling) until the UDS
+-- path exists on disk. Process-compose can take a couple of seconds to
+-- create the socket during startup; if we still don't see it after 10s,
+-- log the timeout explicitly — the next 'S.connect' call will then fail
+-- with ENOENT, but at least the user sees why.
+waitForSocket :: FilePath -> IO ()
+waitForSocket path = go (100 :: Int)
+  where
+    go 0 = hPutStrLn stderr $ "observer: timed out waiting 10s for " <> path
+    go n = do
+      exists <- doesPathExist path
+      if exists
+        then pure ()
+        else threadDelay 100_000 >> go (n - 1)
