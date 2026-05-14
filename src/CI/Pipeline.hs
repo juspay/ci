@@ -215,11 +215,11 @@ buildProcessCompose mode = do
     -- we shell out to git only when at least one lane is remote. This
     -- keeps @dump-yaml@ for a single-platform pipeline working outside
     -- a git checkout (the original behaviour).
-    mSha <-
+    shaForTransport <-
         if hasRemote
-            then Just <$> (dieOnLeft =<< resolveSha)
-            else pure Nothing
-    let mkCommand = commandForNode mSha localPlat hosts
+            then RemoteLanes <$> (dieOnLeft =<< resolveSha)
+            else pure NoRemoteLanes
+    let mkCommand = commandForNode shaForTransport localPlat hosts
     pure $ toProcessCompose (workingDir mode) mkCommand (logLocation mode) nodeGraph
   where
     workingDir LocalRun = Nothing
@@ -276,25 +276,39 @@ resolveHostsFor mode localPlat platforms = do
   where
     addInteractively hs p = snd <$> resolveHost p hs
 
+{- | The pipeline's SHA-resolution state, expressed as one value
+instead of a 'Maybe Sha' that has to agree with an independent
+'hasRemote' boolean. 'NoRemoteLanes' is the @dump-yaml@-outside-a-repo
+case; 'RemoteLanes' carries the SHA every SSH lane needs to clone.
+
+Modelling it as a sum rather than a 'Maybe' kills the previously-
+unreachable @(SSH lane, Nothing)@ branch — the type now witnesses
+that "we have remote lanes" and "we have a SHA" are the same fact.
+-}
+data ShaForTransport = NoRemoteLanes | RemoteLanes Sha
+
 {- | Per-node command construction: 'Local' if the node's platform
 matches the runner; otherwise 'Ssh' against the resolved host.
-'Nothing' for the SHA is unreachable on the SSH branch —
-'buildProcessCompose' resolves the SHA whenever any lane is
-remote — but expressed defensively so a future bug in resolution
-surfaces with a useful message rather than a runtime crash.
+
+The two error branches witness the fan-out invariants:
+'resolveHostsFor' ensures every remote platform has a host, and
+'buildProcessCompose' produces 'RemoteLanes' iff a remote lane exists.
+A remote 'NodeId' with 'NoRemoteLanes' would be a 'fanOut' bug — the
+caller shouldn't be able to build that state, so we 'error' rather
+than carry a defensive 'Maybe' through the type.
 -}
-commandForNode :: Maybe Sha -> Platform -> Hosts -> NodeId -> T.Text
-commandForNode mSha localPlat hosts node
+commandForNode :: ShaForTransport -> Platform -> Hosts -> NodeId -> T.Text
+commandForNode shaForTransport localPlat hosts node
     | node.platform == localPlat = commandFor Local node.recipe
-    | otherwise = case (lookupHost node.platform hosts, mSha) of
-        (Just h, Just sha) -> commandFor (Ssh h sha) node.recipe
+    | otherwise = case (lookupHost node.platform hosts, shaForTransport) of
+        (Just h, RemoteLanes sha) -> commandFor (Ssh h sha) node.recipe
         (Nothing, _) ->
             error $
                 "internal error: no SSH host for "
                     <> T.unpack (display node.platform)
                     <> " (resolveHostsFor should have caught this)"
-        (_, Nothing) ->
-            error "internal error: SSH lane present but SHA unresolved (buildProcessCompose contract violated)"
+        (_, NoRemoteLanes) ->
+            error "internal error: remote NodeId reached commandForNode with NoRemoteLanes (fanOut contract violated)"
 
 {- | The single 'die' site in the project: every recoverable failure
 mode threads up through @Either e a@ to this boundary, where the
