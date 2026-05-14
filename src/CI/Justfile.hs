@@ -216,11 +216,18 @@ parseDump bs = bimap ParseError (qualifyDeps . flattenDump) (eitherDecodeStrict 
 -- just uses inside its tree) are dropped in favour of the FQN — top-level
 -- recipes remain bare (@default@), submodule recipes become @mod::name@.
 -- Pure structural pass; does not touch deps.
+--
+-- @just@ guarantees FQN uniqueness across the whole tree (the CLI
+-- rejects collisions at load time), so the @keepFirst@ merge policy
+-- below is defensive: it names the invariant rather than silently
+-- relying on @Map@\'s default left-bias.
 flattenDump :: Dump -> Map RecipeName Recipe
-flattenDump d = top d <> Map.unions (flattenDump <$> Map.elems d.modules)
+flattenDump d = Map.unionsWith keepFirst (top d : (flattenDump <$> Map.elems d.modules))
   where
     top :: Dump -> Map RecipeName Recipe
     top dump = Map.fromList [(r.namepath, r) | r <- Map.elems dump.recipes]
+    keepFirst :: a -> a -> a
+    keepFirst x _ = x
 
 -- | Rewrite each recipe's dep list so every 'Dep' refers to its target by
 -- fully-qualified name. Dep strings already containing @::@ are trusted
