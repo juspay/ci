@@ -10,8 +10,7 @@ module CI.ProcessComposeSpec (spec) where
 import qualified Algebra.Graph.AdjacencyMap as G
 import CI.Justfile (RecipeName)
 import CI.ProcessCompose (toProcessCompose)
-import qualified Data.Text as T
-import qualified Data.Text.Encoding as TE
+import qualified Data.ByteString.Char8 as BS8
 import qualified Data.Yaml as Y
 import Test.Hspec
 
@@ -31,7 +30,7 @@ spec = describe "toProcessCompose" $ do
 -- assertion surface without exercising any new code path.
 encodeYaml :: (RecipeName -> Maybe FilePath) -> String
 encodeYaml mkLog =
-  T.unpack . TE.decodeUtf8 . Y.encode $
+  BS8.unpack . Y.encode $
     toProcessCompose Nothing (const "echo hi") mkLog graph
   where
     graph = G.vertex "r"
