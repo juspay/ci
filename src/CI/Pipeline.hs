@@ -88,7 +88,7 @@ runLocal :: RunDir -> [String] -> IO ()
 runLocal dirs passthrough = do
     pc <- buildProcessCompose LocalRun
     outcomes <- newOutcomes (processNames pc)
-    let onState ps = forNode ps $ \node -> recordOutcome outcomes node ps
+    let onState ps = withParsedNode ps $ \node -> recordOutcome outcomes node ps
     withObserver dirs.sock onState $
         void $
             runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
@@ -133,7 +133,7 @@ runStrict dirs passthrough = do
         createPlatformDirs logDir nodes
         seedPending repo sha logDir nodes
         outcomes <- newOutcomes nodes
-        let onState ps = forNode ps $ \node ->
+        let onState ps = withParsedNode ps $ \node ->
                 postStatusFor repo sha logDir node ps
                     >> recordOutcome outcomes node ps
         withObserver dirs.sock onState $
@@ -151,15 +151,16 @@ createPlatformDirs :: FilePath -> [NodeId] -> IO ()
 createPlatformDirs logDir nodes =
     mapM_ (createDirectoryIfMissing True . platformDir logDir) (nub [n.platform | n <- nodes])
 
-{- | The single 'parseNodeId' site in the runtime path. Both observers
-('postStatusFor' and 'recordOutcome') consume the same parsed
-'NodeId', so "is this event for a node we scheduled?" is decided
-once instead of being re-decided in each downstream module. If
-'parseNodeId' rejects the event name, the action is silently
-dropped — same policy both sides had locally, now unified.
+{- | Enforce the wire-event-identity invariant at the single site that
+owns it: parse @ps.name@ as a 'NodeId' and run @action@ only if it
+names a node we scheduled. Both observers ('postStatusFor' and
+'recordOutcome') consume the resulting parsed 'NodeId', so the
+drop-on-unparseable policy is decided once here instead of being
+re-decided in each downstream module. The name signals the
+parse/filter responsibility — this is the gate, not a bare iteration.
 -}
-forNode :: ProcessState -> (NodeId -> IO ()) -> IO ()
-forNode ps action = for_ (parseNodeId ps.name) action
+withParsedNode :: ProcessState -> (NodeId -> IO ()) -> IO ()
+withParsedNode ps action = for_ (parseNodeId ps.name) action
 
 {- | Bracket @body@ between a 'subscribeStates' subscription on @sock@
 and a clean @wait@ on it: spawn the observer, 'link' so its crash
@@ -229,11 +230,11 @@ buildProcessCompose mode = do
     -- we shell out to git only when at least one lane is remote. This
     -- keeps @dump-yaml@ for a single-platform pipeline working outside
     -- a git checkout (the original behaviour).
-    shaForTransport <-
+    remoteLaneState <-
         if hasRemote
             then RemoteLanes <$> (dieOnLeft =<< resolveSha)
             else pure NoRemoteLanes
-    let mkCommand = commandForNode shaForTransport localPlat hosts
+    let mkCommand = commandForNode remoteLaneState localPlat hosts
     pure $ toProcessCompose (workingDir mode) mkCommand (logLocation mode) nodeGraph
   where
     workingDir LocalRun = Nothing
@@ -290,16 +291,20 @@ resolveHostsFor mode localPlat platforms = do
   where
     addInteractively hs p = snd <$> promptAndPersistHost p hs
 
-{- | The pipeline's SHA-resolution state, expressed as one value
-instead of a 'Maybe Sha' that has to agree with an independent
-'hasRemote' boolean. 'NoRemoteLanes' is the @dump-yaml@-outside-a-repo
-case; 'RemoteLanes' carries the SHA every SSH lane needs to clone.
+{- | Orchestrator-side branching state: does the pipeline contain any
+remote lane, and if so what SHA do those lanes clone? Named after
+the orchestrator's decision (remote-lane presence), not after the
+downstream 'CI.Transport' module that ultimately consumes the SHA —
+the 'CI.Transport.Ssh' constructor is where SHA-as-parameter lives;
+this type is where the "do we even need one?" decision lives.
 
-Modelling it as a sum rather than a 'Maybe' kills the previously-
-unreachable @(SSH lane, Nothing)@ branch — the type now witnesses
-that "we have remote lanes" and "we have a SHA" are the same fact.
+Modelling it as a sum rather than a 'Maybe Sha' + 'hasRemote' 'Bool'
+kills the previously-unreachable @(SSH lane, Nothing)@ branch: the
+type now witnesses that "we have remote lanes" and "we have a SHA"
+are the same fact. 'NoRemoteLanes' is the @dump-yaml@-outside-a-repo
+case; 'RemoteLanes' carries the SHA every SSH lane needs to clone.
 -}
-data ShaForTransport = NoRemoteLanes | RemoteLanes Sha
+data RemoteLaneState = NoRemoteLanes | RemoteLanes Sha
 
 {- | Per-node command construction: 'Local' if the node's platform
 matches the runner; otherwise 'Ssh' against the resolved host.
@@ -311,10 +316,10 @@ A remote 'NodeId' with 'NoRemoteLanes' would be a 'fanOut' bug — the
 caller shouldn't be able to build that state, so we 'error' rather
 than carry a defensive 'Maybe' through the type.
 -}
-commandForNode :: ShaForTransport -> Platform -> Hosts -> NodeId -> T.Text
-commandForNode shaForTransport localPlat hosts node
+commandForNode :: RemoteLaneState -> Platform -> Hosts -> NodeId -> T.Text
+commandForNode remoteLaneState localPlat hosts node
     | node.platform == localPlat = commandFor Local node.recipe
-    | otherwise = case (lookupHost node.platform hosts, shaForTransport) of
+    | otherwise = case (lookupHost node.platform hosts, remoteLaneState) of
         (Just h, RemoteLanes sha) -> commandFor (Ssh h sha) node.recipe
         (Nothing, _) ->
             error $
