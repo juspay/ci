@@ -251,12 +251,12 @@ qualifyDeps = fmap qualifyOne
     qualifyOne r = r {dependencies = map (qualifyDep (modulePath r.namepath)) r.dependencies}
 
 -- | Strip a recipe's trailing @::name@ segment to yield the path of its
--- enclosing module — @""@ for top-level recipes, @ci@ for @ci::e2e@,
--- @ci::sub@ for @ci::sub::recipe@.
-modulePath :: RecipeName -> Text
+-- enclosing module — 'Nothing' for top-level recipes, @Just "ci"@ for
+-- @ci::e2e@, @Just "ci::sub"@ for @ci::sub::recipe@.
+modulePath :: RecipeName -> Maybe Text
 modulePath (RecipeName np) = case T.breakOnEnd "::" np of
-  ("", _) -> ""
-  (prefix, _) -> T.dropEnd 2 prefix
+  ("", _) -> Nothing
+  (prefix, _) -> Just (T.dropEnd 2 prefix)
 
 -- | Resolve a single 'Dep' against the module path of the recipe that
 -- owns it. Three branches:
@@ -265,19 +265,19 @@ modulePath (RecipeName np) = case T.breakOnEnd "::" np of
 --     qualified deps in source form when the source crosses module
 --     boundaries.
 --
---   * An empty owner module path means the dep is on a top-level
---     recipe, so there's no module to prefix with and the dep is
---     already in its final form.
+--   * 'Nothing' owner module (top-level recipe) means there is no
+--     module to prefix with; the dep is already in its final form.
 --
---   * Otherwise the dep is a bare sibling reference inside a submodule,
---     and gets prefixed with the owner's module path.
+--   * @Just m@ owner: the dep is a bare sibling inside that submodule
+--     and gets prefixed with @m@.
 --
 -- Lifted out of 'qualifyDeps' so the rule stays one named decision
 -- rather than an inline branch in a traversal.
-qualifyDep :: Text -> Dep -> Dep
-qualifyDep ownerMod d
+qualifyDep :: Maybe Text -> Dep -> Dep
+qualifyDep mOwnerMod d
   | "::" `T.isInfixOf` rawName = d
-  | T.null ownerMod = d
-  | otherwise = d {recipe = RecipeName (ownerMod <> "::" <> rawName)}
+  | otherwise = case mOwnerMod of
+      Nothing -> d
+      Just m -> d {recipe = RecipeName (m <> "::" <> rawName)}
   where
     rawName = case d.recipe of RecipeName n -> n
