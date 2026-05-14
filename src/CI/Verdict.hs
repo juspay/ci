@@ -88,11 +88,7 @@ recordOutcome (Outcomes ref) ps =
       -- to the map would only confuse the summary).
       atomicModifyIORef' ref (\m -> (Map.adjust (const o) (recipeNameFromText ps.name) m, ()))
 
--- | Verdict-side mapping for the three terminal classifications. The
--- isomorphism with 'TerminalStatus' is deliberate (each pc terminal
--- state has a single verdict label) — the rename adopts the
--- verdict's own vocabulary so 'runVerdictFrom''s signature reads in
--- domain terms.
+-- | Verdict-side relabeling of the three terminal classifications.
 terminalToOutcome :: TerminalStatus -> RecipeOutcome
 terminalToOutcome TsSucceeded = Succeeded
 terminalToOutcome TsFailed = Failed
