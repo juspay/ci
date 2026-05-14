@@ -23,14 +23,14 @@ import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (fetchDump, recipeCommand)
 import CI.LogPath (logDirFor, logPathFor)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
-import CI.ProcessCompose.Events (subscribeStates)
-import CI.Verdict (newOutcomes, readOutcomes, recordOutcome, verdictCode, verdictSummary)
+import CI.ProcessCompose.Events (ProcessState, subscribeStates)
+import CI.Verdict (exitWithVerdict, newOutcomes, recordOutcome)
 import Control.Concurrent.Async (link, wait, withAsync)
+import Control.Monad (void)
 import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
 import Data.Text.Display (Display, display)
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
-import System.Exit (die, exitWith)
+import System.Exit (die)
 import System.FilePath ((</>))
 
 -- | The runtime artifact paths under @\$PWD\/.ci\/@. Built once at the top
@@ -69,13 +69,9 @@ runLocal :: RunDir -> [String] -> IO ()
 runLocal dirs passthrough = do
   pc <- buildProcessCompose LocalRun
   outcomes <- newOutcomes (processNames pc)
-  withAsync (subscribeStates dirs.sock (recordOutcome outcomes)) $ \obs -> do
-    link obs
-    _ <- runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
-    wait obs
-    o <- readOutcomes outcomes
-    mapM_ TIO.putStrLn (verdictSummary o)
-    exitWith (verdictCode o)
+  withObserver dirs.sock (recordOutcome outcomes) $
+    void $ runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
+  exitWithVerdict outcomes
 
 -- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
 -- via @git worktree@ at @.ci\/worktree@ → start process-compose with its
@@ -100,8 +96,8 @@ runLocal dirs passthrough = do
 -- Process-compose's own exit code is intentionally ignored — with
 -- @restart: no@ on every process it no longer reflects pipeline
 -- outcome (a failed recipe leaves pc exiting 0). The accumulated
--- outcome map is the source of truth; the final 'ExitCode' is
--- derived from it by 'verdictCode'.
+-- outcome map is the source of truth; 'exitWithVerdict' derives the
+-- final 'ExitCode' from it.
 runStrict :: RunDir -> [String] -> IO ()
 runStrict dirs passthrough = do
   dieOnLeft =<< ensureCleanTree
@@ -115,16 +111,23 @@ runStrict dirs passthrough = do
     seedPending repo sha logDir recipes
     outcomes <- newOutcomes recipes
     let onState ps = postStatusFor repo sha logDir ps >> recordOutcome outcomes ps
-    withAsync (subscribeStates dirs.sock onState) $ \obs -> do
-      -- 'link' propagates an observer crash to this thread, so any path
-      -- past 'wait' below is a clean WebSocket close (process-compose
-      -- shutdown closes the WS on its own).
-      link obs
-      _ <- runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
-      wait obs
-      o <- readOutcomes outcomes
-      mapM_ TIO.putStrLn (verdictSummary o)
-      exitWith (verdictCode o)
+    withObserver dirs.sock onState $
+      void $ runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
+    exitWithVerdict outcomes
+
+-- | Bracket @body@ between a 'subscribeStates' subscription on @sock@
+-- and a clean @wait@ on it: spawn the observer, 'link' so its crash
+-- aborts the caller, run @body@, then 'wait' for the WebSocket to
+-- close (which it does when process-compose exits). The
+-- async-lifecycle scaffold lives here so 'runLocal' and 'runStrict'
+-- vary only in their @onState@ callback and the body they pass.
+withObserver :: FilePath -> (ProcessState -> IO ()) -> IO a -> IO a
+withObserver sockP onState body =
+  withAsync (subscribeStates sockP onState) $ \obs -> do
+    link obs
+    result <- body
+    wait obs
+    pure result
 
 -- | The two pipeline-build modes. 'LocalRun' is the @dev@ / @dump-yaml@
 -- shape: no worktree pin, no per-recipe log routing. 'StrictRun'

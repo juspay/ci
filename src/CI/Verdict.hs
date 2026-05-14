@@ -23,6 +23,7 @@ module CI.Verdict
     readOutcomes,
     verdictCode,
     verdictSummary,
+    exitWithVerdict,
     terminalToOutcome,
   )
 where
@@ -34,8 +35,9 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
 import Data.Text.Display (Display (..), display)
-import System.Exit (ExitCode (..))
+import System.Exit (ExitCode (..), exitWith)
 
 -- | The terminal outcome of one recipe in a pipeline run. 'Unreported'
 -- means \"the observer never saw a terminal state event for this
@@ -98,6 +100,18 @@ terminalToOutcome :: TerminalStatus -> RecipeOutcome
 terminalToOutcome TsSucceeded = Succeeded
 terminalToOutcome TsFailed = Failed
 terminalToOutcome TsSkipped = Skipped
+
+-- | End-of-run convenience: snapshot the accumulator, print the
+-- per-recipe summary to stdout, and exit with the derived code.
+-- Glue around 'verdictSummary' + 'verdictCode' for the orchestrator's
+-- one common shape. The pure functions remain the seam for any
+-- caller that wants the summary without exiting (e.g. a future MCP
+-- server or HTTP handler).
+exitWithVerdict :: Outcomes -> IO ()
+exitWithVerdict outcomes = do
+  o <- readOutcomes outcomes
+  mapM_ TIO.putStrLn (verdictSummary o)
+  exitWith (verdictCode o)
 
 -- | Snapshot the accumulator. Call once, after the observer subscription
 -- has closed (the WebSocket closes when process-compose exits, so by
