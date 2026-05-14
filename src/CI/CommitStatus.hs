@@ -2,11 +2,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Translate process-compose state events into GitHub commit-status posts.
--- This module owns CI's policy: the @ci/\<recipe\>@ context-name
--- convention, the 'ProcessStatus' → 'CommitStatus' mapping, and the
--- human-readable description per state. The endpoint URL, the wire
+-- This module owns CI's policy: the context-name convention (the recipe
+-- FQN, used verbatim), the 'ProcessStatus' → 'CommitStatus' mapping, and
+-- the human-readable description per state. The endpoint URL, the wire
 -- encoding of each state, and the form-field names are gh-API details
--- owned by "CI.Gh".
+-- owned by "CI.Gh". Multi-platform may eventually require a
+-- @\<system\>\/\<recipe\>@ shape (see [#14](https://github.com/juspay/ci/issues/14)).
 module CI.CommitStatus (postStatusFor, seedPending) where
 
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
@@ -71,9 +72,10 @@ postOne repo sha recipe cs desc = do
     Right () -> hPutStrLn stderr line
     Left e -> hPutStrLn stderr $ line <> " FAILED: " <> T.unpack (display e)
 
--- | The single source of truth for status-check context names: @ci/\<recipe\>@.
+-- | The single source of truth for status-check context names: the
+-- recipe's fully-qualified name, used verbatim.
 mkContext :: Display a => a -> Context
-mkContext recipe = contextFrom ("ci/" <> display recipe)
+mkContext recipe = contextFrom (display recipe)
 
 -- | CI's human-readable label per state; sent as the @description@ field.
 describe :: CommitStatus -> Text
