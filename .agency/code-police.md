@@ -123,6 +123,28 @@ _Anti-patterns_:
 - Building a user-facing message string inline at the failure site (`Left ("recipe " <> show k <> " not found")`). The structured error should carry `k`; the display function formats it.
 - Catching a structured error and re-throwing as a `String` — same bug, one layer deeper.
 
+## errors-match-callee-failures
+
+A function's error type is its *exact* failure set. Every constructor of the sum it returns must be reachable from that function's body — otherwise the type is overstated and every caller pays the cost: pattern-matches against dead branches, lost exhaustiveness warnings, a reader who can't tell which paths are actually live.
+
+The classic violation is the kitchen-sink `<Module>Error` covering every failure any operation in the module might hit, returned by all of them. A `resolveSomething :: IO (Either ModuleError T)` that advertises a `DirtyState [_]` failure only some *other* function in the module can produce makes every caller handle a case that will never fire — or wildcard it and lose the safety net when branches are later added.
+
+The mechanical check: for each `data XError = C1 | C2 | ...` and each function whose signature is `... -> Either XError _` (or `... -> m _` with `MonadError XError m`), every constructor must be constructed in at least one such function's body. Any constructor unreachable from every function returning the type is a dead branch by construction; any function that can only produce a strict subset is lying.
+
+_How to apply_:
+
+- For each function returning an `Either e _`, enumerate the constructors of `e` its body produces. If the set is a strict subset of `e`'s constructors, the type is overstated. Either split `e`, or return the smaller subset.
+- Prefer **per-function focused error types**: one error sum whose constructors are exactly that function's failure modes. Two functions sharing one failure mode share a constructor by *composition* (wrapping), not by *inheritance* (a shared god-type).
+- If a function has a single failure mode that already has a focused type (e.g. `SubprocessError`), return that directly. Don't wrap it in a single-constructor module-level sum for naming symmetry.
+- Cross-function composition uses constructor wrapping: `data OuterError = OuterParse String | OuterInner InnerError`. The wrapper's constructors reflect this layer's actual failures, with `InnerError` carried in one of them.
+
+_Anti-patterns_:
+
+- `data ModuleError = OpA_Failed _ | OpB_Failed _ | OpC_Failed _` returned by all three operations, when `opA` can only produce `OpA_Failed`. Three focused types beat one shared type with two-thirds dead branches at every call site.
+- `f :: IO (Either ModuleError T)` whose body never constructs half the constructors of `ModuleError`. The signature lies.
+- Wrapping a single-constructor failure mode in a per-module sum just to keep naming uniform across modules. If `Either SubprocessError T` says everything truthful, that's the right type.
+- Reading "sum type per error domain" (from `structured-errors`) as "one type per module." Domain is the *function's failure set*, not the *module*.
+
 ## use-record-dot
 
 Enable `OverloadedRecordDot` for `r.field` syntax in modules that define or read records. Use plain `r.field` for reads; don't write one-line wrapper functions whose entire body is a single field access, and don't reach for sectioned-functor forms when a plain expression works.

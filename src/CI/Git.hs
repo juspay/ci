@@ -12,7 +12,7 @@ module CI.Git
     Sha,
 
     -- * Operations
-    GitError (..),
+    CleanTreeError (..),
     ensureCleanTree,
     resolveSha,
     withSnapshotWorktree,
@@ -41,19 +41,17 @@ newtype Sha = Sha Text
   deriving stock (Show, Eq)
   deriving newtype (Display)
 
--- | Failures from the git operations in this module. Subprocess failures
--- wrap 'SubprocessError'; the @binary failed (N): stderr@ formatting lives
--- in one place.
-data GitError
-  = GitSubprocess SubprocessError
-  | -- | Working tree has uncommitted changes; carries the dirty paths
-    -- parsed out of @git status --porcelain@ so the user can see what to
-    -- commit or stash.
-    DirtyTree [FilePath]
+-- | The two ways 'ensureCleanTree' can fail. Subprocess failures wrap
+-- 'SubprocessError' so the @binary failed (N): stderr@ formatting lives
+-- in one place; 'DirtyTree' carries the porcelain-parsed paths so the
+-- user can see what to commit or stash.
+data CleanTreeError
+  = CleanTreeSubprocess SubprocessError
+  | DirtyTree [FilePath]
   deriving stock (Show)
 
-instance Display GitError where
-  displayBuilder (GitSubprocess e) = displayBuilder e
+instance Display CleanTreeError where
+  displayBuilder (CleanTreeSubprocess e) = displayBuilder e
   displayBuilder (DirtyTree paths) =
     "working tree is dirty (CI=true requires a clean tree); commit or stash first:\n"
       <> mconcat ["  " <> displayBuilder (T.pack p) <> "\n" | p <- paths]
@@ -61,11 +59,11 @@ instance Display GitError where
 -- | Refuse the run if the working tree has uncommitted changes. Strict mode
 -- demands the SHA on the green check exactly match the bytes that were
 -- tested; a dirty tree breaks that invariant by definition.
-ensureCleanTree :: IO (Either GitError ())
+ensureCleanTree :: IO (Either CleanTreeError ())
 ensureCleanTree = do
   result <- runSubprocess "git status --porcelain" gitBin ["status", "--porcelain"] ""
   pure $ case result of
-    Left e -> Left (GitSubprocess e)
+    Left e -> Left (CleanTreeSubprocess e)
     Right out -> case mapMaybe porcelainPath (lines out) of
       [] -> Right ()
       dirty -> Left (DirtyTree dirty)
@@ -78,13 +76,13 @@ ensureCleanTree = do
 
 -- | Resolve the current HEAD SHA via @git rev-parse HEAD@. Used once at
 -- strict-mode startup so every commit-status post against this run targets
--- the same commit.
-resolveSha :: IO (Either GitError Sha)
+-- the same commit. The only failure mode is a subprocess failure, so the
+-- return type carries 'SubprocessError' directly — no module-level error
+-- wrapper.
+resolveSha :: IO (Either SubprocessError Sha)
 resolveSha = do
   result <- runSubprocess "git rev-parse HEAD" gitBin ["rev-parse", "HEAD"] ""
-  pure $ case result of
-    Left e -> Left (GitSubprocess e)
-    Right out -> Right $ Sha $ T.strip $ T.pack out
+  pure $ Sha . T.strip . T.pack <$> result
 
 -- | Create a @git worktree@ at HEAD pinned at @snap@, run the action, and
 -- remove the worktree on any exit path (success, failure, or exception,
