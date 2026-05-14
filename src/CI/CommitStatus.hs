@@ -47,7 +47,7 @@ import System.IO (hPutStrLn, stderr)
 postStatusFor :: Repo -> Sha -> FilePath -> ProcessState -> IO ()
 postStatusFor repo sha logDir ps =
   for_ (psToCommitStatus ps) $ \cs ->
-    postOne repo sha ps.name cs (describe cs (logPathFor logDir ps.name))
+    postOne repo sha ps.name cs $ describe cs $ logPathFor logDir ps.name
 
 -- | Pre-seed every recipe with a 'Pending' commit status at startup —
 -- one parallel @gh api@ POST per recipe, all joined before this returns.
@@ -66,7 +66,7 @@ postStatusFor repo sha logDir ps =
 seedPending :: Repo -> Sha -> FilePath -> [RecipeName] -> IO ()
 seedPending repo sha logDir recipes =
   forConcurrently_ recipes $ \r ->
-    postOne repo sha r Pending (seedDescription (logPathFor logDir r))
+    postOne repo sha r Pending $ seedDescription $ logPathFor logDir r
 
 -- | Issue one commit-status POST with a caller-supplied description and
 -- log the outcome.
@@ -91,7 +91,7 @@ mkContext recipe = contextFrom (display recipe)
 -- ~80 chars at typical recipe-name lengths, leaving room for the state
 -- prose without truncation.
 describe :: CommitStatus -> FilePath -> Text
-describe cs = withLogPath (stateLabel cs)
+describe cs = withLogPath $ stateLabel cs
   where
     stateLabel Pending = "Running"
     stateLabel Success = "Succeeded"
@@ -127,7 +127,7 @@ logPathFor logDir recipe = logDir </> T.unpack (display recipe) <> ".log"
 -- Lives alongside 'logPathFor' so the full @.ci\/\<short-sha\>\/\<recipe\>.log@
 -- convention is owned by one module.
 logDirFor :: Sha -> FilePath
-logDirFor sha = ".ci" </> T.unpack (T.take shortShaLen (display sha))
+logDirFor sha = ".ci" </> T.unpack (T.take shortShaLen $ display sha)
   where
     shortShaLen = 7
 

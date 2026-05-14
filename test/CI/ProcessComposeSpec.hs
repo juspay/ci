@@ -31,7 +31,7 @@ spec = describe "toProcessCompose" $ do
 -- assertion surface without exercising any new code path.
 encodeYaml :: (RecipeName -> Maybe FilePath) -> String
 encodeYaml mkLog =
-  T.unpack . TE.decodeUtf8 $
-    Y.encode (toProcessCompose Nothing (const "echo hi") mkLog graph)
+  T.unpack . TE.decodeUtf8 . Y.encode $
+    toProcessCompose Nothing (const "echo hi") mkLog graph
   where
     graph = G.vertex "r"
