@@ -8,14 +8,13 @@
 -- the orchestrator calls 'runVerdictFrom' on the map to derive the
 -- pipeline's overall 'ExitCode' and a printable summary.
 --
--- 'RecipeOutcome' is local to this module: GitHub's 'CommitStatus' is a
--- different concept (it covers @Pending@ — \"check is open\" — which is
--- a transition, not an outcome) and tying verdict storage to it would
--- be borrowing semantics. The boundary conversion lives in
--- 'recordOutcome' and routes through 'CI.CommitStatus.psToCommitStatus'
--- so the GH check page and the local verdict agree by construction —
--- agreement comes from sharing the underlying predicate, not from
--- sharing the storage type.
+-- 'RecipeOutcome' is local to this module: it's the verdict's
+-- vocabulary, distinct from GitHub's 'CI.Gh.CommitStatus' (which has
+-- a @Pending@ "check is open" transition that isn't a terminal
+-- outcome). Both vocabularies derive from the same base classifier
+-- — 'CI.ProcessCompose.Events.psToTerminalStatus' — so they stay in
+-- agreement by construction without this module having to depend on
+-- "CI.CommitStatus".
 module CI.Verdict
   ( RecipeOutcome (..),
     Outcomes,
@@ -26,10 +25,8 @@ module CI.Verdict
   )
 where
 
-import CI.CommitStatus (psToCommitStatus)
-import qualified CI.Gh as Gh
 import CI.Justfile (RecipeName)
-import CI.ProcessCompose.Events (ProcessState (..))
+import CI.ProcessCompose.Events (ProcessState (..), TerminalStatus (..), psToTerminalStatus)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
@@ -69,30 +66,30 @@ newOutcomes recipes =
   Outcomes <$> newIORef (Map.fromList [(display r, Pending) | r <- recipes])
 
 -- | Fold one 'ProcessState' event into the outcome map. Routes through
--- 'psToCommitStatus' (so the GH check page and this local verdict
--- agree on the underlying predicate) then converts the resulting
--- 'CommitStatus' to a 'RecipeOutcome'. 'CommitStatus' appears only as
--- an intermediate value here — it never reaches the storage type or
--- the verdict signature.
+-- 'psToTerminalStatus' — the project-wide ground-truth classifier of
+-- process-compose's terminal states — and adopts its outcome under
+-- the verdict's own vocabulary. Non-terminal events ('PsRunning',
+-- 'PsOther') are dropped; the seed 'Pending' stays in place until a
+-- real terminal event arrives.
 --
 -- Safe to call from any thread; the underlying 'atomicModifyIORef''
 -- serializes concurrent writes. In practice only the observer thread
 -- writes.
 recordOutcome :: Outcomes -> ProcessState -> IO ()
 recordOutcome (Outcomes ref) ps =
-  case psToCommitStatus ps >>= commitStatusToOutcome of
+  case terminalToOutcome <$> psToTerminalStatus ps of
     Nothing -> pure ()
     Just o -> atomicModifyIORef' ref (\m -> (Map.insert ps.name o m, ()))
 
--- | Boundary conversion. GitHub's 'Pending' is a transition (\"running\"
--- on the wire) rather than a terminal outcome, so it returns 'Nothing'
--- — keeping the seed 'Pending' in place until a real terminal event
--- arrives.
-commitStatusToOutcome :: Gh.CommitStatus -> Maybe RecipeOutcome
-commitStatusToOutcome Gh.Pending = Nothing
-commitStatusToOutcome Gh.Success = Just Succeeded
-commitStatusToOutcome Gh.Failure = Just Failed
-commitStatusToOutcome Gh.Error = Just Skipped
+-- | Verdict-side mapping for the three terminal classifications. The
+-- isomorphism with 'TerminalStatus' is deliberate (each pc terminal
+-- state has a single verdict label) — the rename adopts the
+-- verdict's own vocabulary so 'runVerdictFrom''s signature reads in
+-- domain terms.
+terminalToOutcome :: TerminalStatus -> RecipeOutcome
+terminalToOutcome TsSucceeded = Succeeded
+terminalToOutcome TsFailed = Failed
+terminalToOutcome TsSkipped = Skipped
 
 -- | Snapshot the accumulator. Call once, after the observer subscription
 -- has closed (the WebSocket closes when process-compose exits, so by

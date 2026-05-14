@@ -8,12 +8,12 @@
 -- encoding of each state, and the form-field names are gh-API details
 -- owned by "CI.Gh". Multi-platform may eventually require a
 -- @\<system\>\/\<recipe\>@ shape (see [#14](https://github.com/juspay/ci/issues/14)).
-module CI.CommitStatus (postStatusFor, seedPending, psToCommitStatus) where
+module CI.CommitStatus (postStatusFor, seedPending) where
 
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
 import CI.Git (Sha)
 import CI.Justfile (RecipeName)
-import CI.ProcessCompose.Events (ProcessState (..), ProcessStatus (..))
+import CI.ProcessCompose.Events (ProcessState (..), ProcessStatus (..), TerminalStatus (..), psToTerminalStatus)
 import Control.Concurrent.Async (forConcurrently_)
 import Data.Foldable (for_)
 import Data.Text (Text)
@@ -86,16 +86,23 @@ describe Error = "Errored"
 
 -- | Translate one process-compose 'ProcessState' event into the
 -- 'CommitStatus' it surfaces under. Non-terminal states ('PsOther')
--- return 'Nothing' so consumers can drop them. Exported because the
--- local verdict accumulator in "CI.Verdict" reuses the same predicate
--- to derive the pipeline's exit code — keeping one derivation means
--- the GitHub status page and the local exit code agree on which
--- recipes counted as successful.
+-- return 'Nothing' so consumers can drop them. The terminal cases
+-- delegate to 'psToTerminalStatus' (the project-wide ground-truth
+-- predicate) and add the GitHub-specific @PsRunning -> Pending@
+-- transition on top — the verdict accumulator in "CI.Verdict" reuses
+-- the same base classifier directly, so the GH check page and the
+-- local exit code stay in agreement without "CI.Verdict" having to
+-- depend on this module.
 psToCommitStatus :: ProcessState -> Maybe CommitStatus
-psToCommitStatus ps = case (ps.status, ps.exit_code) of
-  (PsRunning, _) -> Just Pending
-  (PsCompleted, 0) -> Just Success
-  (PsCompleted, _) -> Just Failure
-  (PsSkipped, _) -> Just Error
-  (PsErrored, _) -> Just Error
-  (PsOther _, _) -> Nothing
+psToCommitStatus ps = case ps.status of
+  PsRunning -> Just Pending
+  _ -> terminalToCommitStatus <$> psToTerminalStatus ps
+
+-- | GitHub-side mapping for the three terminal classifications. Owns
+-- the policy that both 'PsSkipped' and 'PsErrored' surface as
+-- 'Error' on the wire (see 'TerminalStatus' for why those two pc
+-- states collapse together).
+terminalToCommitStatus :: TerminalStatus -> CommitStatus
+terminalToCommitStatus TsSucceeded = Success
+terminalToCommitStatus TsFailed = Failure
+terminalToCommitStatus TsSkipped = Error
