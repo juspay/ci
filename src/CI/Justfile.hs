@@ -63,7 +63,16 @@ recipeCommand (RecipeName n) = T.pack justBin <> " --no-deps " <> n
 newtype RecipeName = RecipeName Text
   deriving newtype (Show, Eq, Ord, IsString, Display, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 
--- | One entry in a recipe's @dependencies@ array: the dep's target name plus any arguments passed at this call site (only non-empty when the target is parameterized).
+-- | One entry in a recipe's @dependencies@ array: the dep's target name
+-- plus any arguments passed at this call site (only non-empty when the
+-- target is parameterized).
+--
+-- The 'recipe' field always holds a fully-qualified name in any value
+-- that reaches the outside of this module. just's raw dump emits
+-- siblings of submodule recipes in source form (@a@, @b@) rather than
+-- qualified form, but 'parseDump' rewrites those to @mod::a@ /
+-- @mod::b@ before returning, so every 'Dep.recipe' anywhere in the
+-- returned map is a key in that same map.
 data Dep = Dep
   { recipe :: RecipeName,
     arguments :: [Text]
