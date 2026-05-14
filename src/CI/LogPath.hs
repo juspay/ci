@@ -23,8 +23,16 @@ import System.FilePath ((</>))
 -- contributor seeing the status can paste it straight into their own
 -- checkout instead of looking at the runner's filesystem layout.
 logDirFor :: Sha -> FilePath
-logDirFor sha = ".ci" </> T.unpack (T.take shortShaLen $ display sha)
+logDirFor sha
+  | T.length shaText < shortShaLen =
+      error $
+        "CI.LogPath.logDirFor: sha shorter than "
+          <> show shortShaLen
+          <> " chars: "
+          <> T.unpack shaText
+  | otherwise = ".ci" </> T.unpack (T.take shortShaLen shaText)
   where
+    shaText = display sha
     shortShaLen = 7
 
 -- | Compose @\<logDir\>\/\<recipe\>.log@. Lives alongside 'logDirFor'
