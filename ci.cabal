@@ -13,13 +13,17 @@ library
                       CI.Gh
                       CI.Git
                       CI.Graph
+                      CI.Hosts
                       CI.Justfile
                       CI.LogPath
+                      CI.Node
                       CI.Pipeline
+                      CI.Platform
                       CI.ProcessCompose
                       CI.ProcessCompose.Events
                       CI.Root
                       CI.Subprocess
+                      CI.Transport
                       CI.Verdict
     build-depends:
         , aeson
@@ -58,6 +62,8 @@ test-suite ci-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     other-modules:    CI.JustfileSpec
+                      CI.NodeSpec
+                      CI.PlatformSpec
                       CI.ProcessComposeSpec
                       CI.VerdictSpec
     build-depends:
