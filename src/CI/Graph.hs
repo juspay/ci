@@ -16,11 +16,11 @@
 module CI.Graph
   ( -- * Reachability
     reachableSubgraph,
-    ReachError (..),
+    ReachError,
 
     -- * just → runner-graph translation
     lowerToRunnerGraph,
-    OrderingConflict (..),
+    OrderingConflict,
   )
 where
 

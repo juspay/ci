@@ -5,26 +5,37 @@ license:         NONE
 build-type:      Simple
 
 common warnings
-    ghc-options: -Wall
+    ghc-options: -Wall -threaded
 
 executable ci
     import:           warnings
     main-is:          Main.hs
-    other-modules:    CI.Entrypoint
+    other-modules:    CI.CommitStatus
+                      CI.Gh
+                      CI.Git
                       CI.Graph
                       CI.Justfile
+                      CI.Pipeline
                       CI.ProcessCompose
-                      CI.Runner
+                      CI.ProcessCompose.Events
+                      CI.Root
+                      CI.Subprocess
     build-depends:
         , aeson
         , algebraic-graphs
+        , async
         , base
         , bytestring
         , containers
+        , directory
+        , filepath
+        , network
         , optparse-applicative
         , process
         , text
         , text-display
+        , time
+        , websockets
         , which
         , yaml
     hs-source-dirs:   src

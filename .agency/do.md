@@ -17,11 +17,18 @@ just run-check
 ## CI command
 
 ```sh
-just ci
+CI=true nix run . -- run
 ```
+
+`ci run` self-hosts: it translates the `just` recipe graph into a
+`process-compose` config and drives the pipeline through `ci run-step
+<recipe>` wrappers. `CI=true` flips each wrapper into status-posting
+mode, so a GitHub commit status (`ci/<recipe>`) is posted at start,
+success, and failure for every recipe — there is no separate hosted
+CI workflow.
 
 Verify via exit code and stdout (no remote CI status check needed locally).
 
 ## Documentation
 
-- `README.md` — keep the Roadmap section in sync as items land.
+- `README.md` — keep up to date.

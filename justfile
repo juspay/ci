@@ -3,7 +3,7 @@ default:
     @just --list
 
 # Run all checks (build + flake check) concurrently, then smoke-test the binary.
-[metadata("entrypoint")]
+[metadata("ci")]
 ci: checks run-check
 
 # Fan out `build` and `flake-check` to run in parallel.
@@ -22,16 +22,18 @@ flake-check:
 ghcid:
     ghcid -T :main
 
-# Smoke-test the dump-yaml subcommand and verify the `ci` process is declared.
+# Smoke-test the dump-yaml subcommand: the `ci` process is declared and its
+# command runs `just --no-deps <recipe>` directly (no wrapper).
 [linux]
 run-check: build
     echo "Running on Linux $(uname -srm)"
     nix run . -- dump-yaml | tee /tmp/ci-out
     grep -qE '^  ci:' /tmp/ci-out
+    grep -qE -- '--no-deps' /tmp/ci-out
 
-# Smoke-test the dump-yaml subcommand and verify the `ci` process is declared.
 [macos]
 run-check: build
     echo "Running on macOS $(sw_vers -productVersion)"
     nix run . -- dump-yaml | tee "${TMPDIR%/}/ci-out"
     grep -qE '^  ci:' "${TMPDIR%/}/ci-out"
+    grep -qE -- '--no-deps' "${TMPDIR%/}/ci-out"

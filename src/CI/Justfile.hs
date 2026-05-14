@@ -9,7 +9,7 @@
 
 -- | Everything tied to the @just@ data model: the @just@ CLI and its
 -- @--dump --dump-format json@ schema. Discovery policy (which decoded
--- recipe is the CI root) lives in @CI.Entrypoint@ — that axis of change is
+-- recipe is the pipeline root) lives in @CI.Root@ — that axis of change is
 -- independent of the wire format and shouldn't ride along here.
 module CI.Justfile
   ( -- * Schema
@@ -17,14 +17,15 @@ module CI.Justfile
     Recipe (..),
     Dep (..),
     Attribute (..),
-    Os (..),
 
-    -- * Fetching
-    FetchError (..),
+    -- * Operations
+    FetchError,
     fetchDump,
+    recipeCommand,
   )
 where
 
+import CI.Subprocess (SubprocessError, runSubprocess)
 import Data.Aeson (FromJSON (parseJSON), FromJSONKey, Options (..), ToJSON, ToJSONKey, Value (Object, String), defaultOptions, eitherDecodeStrict, genericParseJSON)
 import qualified Data.Aeson.KeyMap as KeyMap
 import Data.Bifunctor (bimap)
@@ -36,20 +37,24 @@ import qualified Data.Text as T
 import Data.Text.Display (Display (..))
 import qualified Data.Text.Encoding as TE
 import GHC.Generics (Generic)
-import System.Exit (ExitCode (..))
-import System.Process (readProcessWithExitCode)
 import System.Which (staticWhich)
 
 -- | Absolute path to the @just@ binary, baked in at compile time via Nix.
+-- Not exported: every just shell-out in the project goes through one of
+-- the typed operations below.
 justBin :: FilePath
 justBin = $(staticWhich "just")
 
+-- | The shell command process-compose runs per recipe: the absolute
+-- @just@ path with @--no-deps@ (process-compose itself owns scheduling,
+-- so just must not re-resolve dependencies) and the recipe name. Absolute
+-- path so process-compose's spawned shell finds @just@ regardless of PATH.
+recipeCommand :: RecipeName -> Text
+recipeCommand (RecipeName n) = T.pack justBin <> " --no-deps " <> n
+
 -- | The identifier of a recipe, as it appears in a justfile and as a key in @just --dump@'s @recipes@ map.
 newtype RecipeName = RecipeName Text
-  deriving newtype (Show, Eq, Ord, IsString, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
-
-instance Display RecipeName where
-  displayBuilder (RecipeName t) = displayBuilder t
+  deriving newtype (Show, Eq, Ord, IsString, Display, FromJSON, ToJSON, FromJSONKey, ToJSONKey)
 
 -- | One entry in a recipe's @dependencies@ array: the dep's target name plus any arguments passed at this call site (only non-empty when the target is parameterized).
 data Dep = Dep
@@ -143,22 +148,21 @@ newtype Dump = Dump {recipes :: Map.Map RecipeName Recipe}
 
 -- | Failures from 'fetchDump'.
 data FetchError
-  = -- | The @just@ subprocess exited non-zero. Carries the exit code and the captured stderr.
-    FetchProcessError Int String
+  = -- | The @just@ subprocess exited non-zero.
+    FetchProcessError SubprocessError
   | -- | The @just@ subprocess succeeded but its JSON output didn't decode. Carries aeson's underlying message.
     FetchParseError String
   deriving stock (Show)
 
 instance Display FetchError where
-  displayBuilder (FetchProcessError n stderr) =
-    "just exited with code " <> displayBuilder n <> ": " <> displayBuilder (T.pack stderr)
+  displayBuilder (FetchProcessError e) = displayBuilder e
   displayBuilder (FetchParseError msg) =
     "failed to decode just dump: " <> displayBuilder (T.pack msg)
 
 -- | Invoke @just --dump --dump-format json@ and decode the @recipes@ map. Process failures and JSON parse failures are both surfaced as 'FetchError'; no exception escapes.
 fetchDump :: IO (Either FetchError (Map.Map RecipeName Recipe))
 fetchDump = do
-  (exitCode, stdout, stderr) <- readProcessWithExitCode justBin ["--dump", "--dump-format", "json"] ""
-  pure $ case exitCode of
-    ExitFailure n -> Left $ FetchProcessError n stderr
-    ExitSuccess -> bimap FetchParseError (\d -> d.recipes) (eitherDecodeStrict @Dump (TE.encodeUtf8 (T.pack stdout)))
+  result <- runSubprocess "just --dump --dump-format json" justBin ["--dump", "--dump-format", "json"] ""
+  pure $ case result of
+    Left e -> Left (FetchProcessError e)
+    Right stdout -> bimap FetchParseError (\d -> d.recipes) (eitherDecodeStrict @Dump (TE.encodeUtf8 (T.pack stdout)))

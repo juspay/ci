@@ -123,6 +123,28 @@ _Anti-patterns_:
 - Building a user-facing message string inline at the failure site (`Left ("recipe " <> show k <> " not found")`). The structured error should carry `k`; the display function formats it.
 - Catching a structured error and re-throwing as a `String` — same bug, one layer deeper.
 
+## errors-match-callee-failures
+
+A function's error type is its *exact* failure set. Every constructor of the sum it returns must be reachable from that function's body — otherwise the type is overstated and every caller pays the cost: pattern-matches against dead branches, lost exhaustiveness warnings, a reader who can't tell which paths are actually live.
+
+The classic violation is the kitchen-sink `<Module>Error` covering every failure any operation in the module might hit, returned by all of them. A `resolveSomething :: IO (Either ModuleError T)` that advertises a `DirtyState [_]` failure only some *other* function in the module can produce makes every caller handle a case that will never fire — or wildcard it and lose the safety net when branches are later added.
+
+The mechanical check: for each `data XError = C1 | C2 | ...` and each function whose signature is `... -> Either XError _` (or `... -> m _` with `MonadError XError m`), every constructor must be constructed in at least one such function's body. Any constructor unreachable from every function returning the type is a dead branch by construction; any function that can only produce a strict subset is lying.
+
+_How to apply_:
+
+- For each function returning an `Either e _`, enumerate the constructors of `e` its body produces. If the set is a strict subset of `e`'s constructors, the type is overstated. Either split `e`, or return the smaller subset.
+- Prefer **per-function focused error types**: one error sum whose constructors are exactly that function's failure modes. Two functions sharing one failure mode share a constructor by *composition* (wrapping), not by *inheritance* (a shared god-type).
+- If a function has a single failure mode that already has a focused type (e.g. `SubprocessError`), return that directly. Don't wrap it in a single-constructor module-level sum for naming symmetry.
+- Cross-function composition uses constructor wrapping: `data OuterError = OuterParse String | OuterInner InnerError`. The wrapper's constructors reflect this layer's actual failures, with `InnerError` carried in one of them.
+
+_Anti-patterns_:
+
+- `data ModuleError = OpA_Failed _ | OpB_Failed _ | OpC_Failed _` returned by all three operations, when `opA` can only produce `OpA_Failed`. Three focused types beat one shared type with two-thirds dead branches at every call site.
+- `f :: IO (Either ModuleError T)` whose body never constructs half the constructors of `ModuleError`. The signature lies.
+- Wrapping a single-constructor failure mode in a per-module sum just to keep naming uniform across modules. If `Either SubprocessError T` says everything truthful, that's the right type.
+- Reading "sum type per error domain" (from `structured-errors`) as "one type per module." Domain is the *function's failure set*, not the *module*.
+
 ## use-record-dot
 
 Enable `OverloadedRecordDot` for `r.field` syntax in modules that define or read records. Use plain `r.field` for reads; don't write one-line wrapper functions whose entire body is a single field access, and don't reach for sectioned-functor forms when a plain expression works.
@@ -147,22 +169,96 @@ _Anti-patterns_:
 
 ## prefer-newtype-over-string
 
-Domain identifiers and values typed as `Text`/`String` should be wrapped in newtypes. A `Text` carrying a recipe name, user ID, URL, file path, semver string, etc. is a domain concept; the type system should know that. Without the newtype, the compiler can't distinguish a `Map Text Recipe` keyed by recipe name from one keyed by user ID, and signatures with several `Text` parameters become impossible to call correctly without re-reading docs.
+Domain identifiers and values typed as `Text`/`String` should be wrapped in newtypes — **and the wrapping must be opaque**. A newtype with its constructor exported (`Foo (..)`) is a type alias with extra syntax: any caller can mint a `Foo` from arbitrary `Text`, or pattern-match to strip the type and get raw `Text` back. The compiler stops protecting you the moment either escape hatch is open.
+
+The newtype's public surface is three things, all in the defining module: a controlled set of **smart constructors** (`IsString` for literals, named functions for parsed/composed values), a `Display` instance as the **canonical destructor**, and **typed operations** that consume the value without unwrapping it.
 
 _How to apply_:
 
 - Wrap each domain concept in a positional `newtype RecipeName = RecipeName Text` (no field accessor). Derive `Eq`, `Ord`, `FromJSON`/`ToJSON`, and — for newtypes used as `Map` keys — `FromJSONKey`/`ToJSONKey` via `deriving newtype`. Runtime cost is zero.
-- Derive `IsString` so callers construct from string literals: `"ci" :: RecipeName` with `OverloadedStrings`. That's the `fromString` half.
-- Derive `Show` newtype-style for debugging and error messages — the underlying type's `Show` (e.g. Text's `"ci"`) is good enough. For richer display, define a `Display` typeclass; don't export an ad-hoc unwrapper.
-- **Keep the constructor unexported.** External modules go through `IsString`/`Show`/`FromJSON` — never via a raw accessor. The whole point of the newtype is that the type-laundering API doesn't exist.
+- **Export just the type name (`Foo`), never `Foo (..)`.** The constructor stays inside the defining module.
+- **For literal-driven construction**: derive `IsString` so callers write `"ci" :: RecipeName` under `OverloadedStrings`.
+- **For parse- or policy-driven construction**: define a named smart constructor in the same module — e.g. `parseSha :: Text -> Maybe Sha`, `contextFrom :: Text -> Context`, `viewRepo :: IO (Either GhError Repo)`. That function is the only entry besides `IsString`; the constructor remains unexported.
+- **Destructure through `Display`, not the constructor.** Derive `deriving newtype Display` so consumers write `display foo` to get back to `Text`. Pattern-matching the constructor outside the defining module is forbidden — that's a `(Foo x) <- whatever` accessor in disguise.
+- **Records of newtypes, not records of `Text`.** A `data Foo = Foo { bar :: Text, baz :: Text }` whose fields are themselves domain identifiers is the same smell as a bare `Text` parameter. Each field is its own newtype; the record composes them.
 - Refactor signatures from `Text -> Map Text Foo -> Map Text [Text]` to `Name -> Map Name Foo -> Map Name [Name]` so the compiler catches swapped parameters.
 
 _Anti-patterns_:
 
-- Exporting `unRecipeName :: RecipeName -> Text` (or similar record accessors). That gives every caller a free pass to strip the type, defeating the newtype. `fromString`/`Show` cover construction and display; reach past them only inside the defining module.
-- Pattern-matching on the constructor outside the defining module to extract the inner value. Same as the above with extra steps.
+- Exporting `Foo (..)`. The constructor leaks the type-laundering API; the newtype is now decorative.
+- Exporting `unRecipeName :: RecipeName -> Text` (or similar record accessors). Same hole with a different shape.
+- Pattern-matching on the constructor outside the defining module to extract the inner value. Go through `display`, never the constructor.
+- A `data Foo = Foo { bar :: Text, baz :: Text }` whose fields are themselves domain identifiers. Bare `Text` in a public record is the same smell as a bare `Text` parameter.
 - `f :: Text -> Map Text Foo -> Either Text Bar` where the three `Text`s mean different things.
 - A `String` filepath, URL, ID, or token threaded as a plain `String`. If it has a domain meaning, it has a newtype.
+
+## use-conventional-base-types
+
+Pick the conventional Haskell base type for each foundational domain before reaching for a newtype. Substituting one for another adds noise — every reader has to guess whether your `Text` is caller content, a URL, a filesystem path, or raw subprocess output — and forces conversions at every IO boundary. Each `T.pack` / `T.unpack` shimming a value between a string-like field and a stdlib function that wants a different shape is the rule violation made visible.
+
+The default mapping:
+
+| Domain                                  | Base type    |
+|-----------------------------------------|--------------|
+| Filesystem paths                        | `FilePath`   |
+| Free-form text (logs, prose, wire str)  | `Text`       |
+| Raw bytes                               | `ByteString` |
+| Subprocess argv                         | `[String]`   |
+| Domain identifiers (IDs, names, refs)   | newtype      |
+
+When a value carries domain meaning, wrap the base type in a newtype — `prefer-newtype-over-string` covers the wrapping rules. This rule is about *which base type* sits inside (and which base type to use when no newtype is warranted yet).
+
+_How to apply_:
+
+- Filesystem paths use `FilePath`. `System.Directory`, `System.Process`, and `System.FilePath` all consume and produce `FilePath`; storing a path as `Text` forces a conversion at every IO call site.
+- Records whose fields encode an external wire format mirror that format's vocabulary at the *value* level, but pick the right Haskell base type at the *field* level: a wire @string@ field that semantically holds a path is `FilePath`, not `Text`. The JSON output is identical either way; the Haskell type is the documentation.
+- Subprocess argv stays `[String]` because `System.Process` consumes `[String]`. Don't push it to `[Text]` and unpack at the call site.
+- The mechanical check is grep: search for `T.pack`/`T.unpack` adjacent to identifiers shaped like paths (`*Dir`, `*File`, `*Path`, `dir`, `path`, `cwd`). Each hit is either a Text-where-FilePath bug or an intentional crossing worth justifying.
+
+_Anti-patterns_:
+
+- A field typed `Maybe Text` holding a filesystem path (`working_dir`, `log_file`, `cwd`). Use `Maybe FilePath`.
+- `T.pack <$> somePath` or `T.unpack pathField` bridging the wrong type at an IO boundary. The conversion is the bug.
+- `[Text]` whose values are filesystem paths. Use `[FilePath]`.
+- `[Text]` named `paths` whose values are **not** pure paths (e.g. `git status --porcelain` lines that include status flags). Either rename the variable to reflect the real content (`lines`, `entries`), or parse the path out and use `[FilePath]`. Type and name must agree on what's inside.
+- Mixing the conventions across a single domain — some `working_dir` fields `FilePath`, others `Text`. Pick the right type once and use it everywhere.
+
+## main-is-thin
+
+`src/Main.hs` is the harness: argv → parse → dispatch → exit. Anything more — orchestration, mode-specific IO, runtime-artifact layout, domain records, binary-path lookups — moves into a sibling module so adding a feature doesn't fatten Main.
+
+_How to apply_:
+
+- Main hosts at most: the command sum, the parser builder, `main`, and (optionally) a tiny boundary helper if no other module owns it.
+- Per-mode bodies, records that describe runtime artifacts, and assembly functions that walk multiple subsystems all live in a sibling module — not in Main.
+- Heuristic: if Main exceeds ~70 lines (imports + command sum + parser + main + dispatch + one tiny helper), check whether a new function or record snuck in that belongs elsewhere.
+
+_Anti-patterns_:
+
+- Per-mode orchestration functions defined in Main.
+- Domain records, path conventions, command-builders defined in Main.
+- A runtime-artifact record threaded through Main's helpers — should live in the module that owns the convention.
+
+## encapsulation-passes-grep
+
+A module that claims to own an interface — a CLI binary, a foreign API, a wire protocol, a low-level handle, an internal subsystem — must be the only file that touches its raw primitives. The module name, top-level haddock, and export list are *claims* about a boundary; the import graph is the *test* of that boundary. When the two disagree, the boundary doesn't exist — only the label does.
+
+The mechanical check is grep. For each raw primitive a wrapper module exposes (binary path, untyped handle, low-level identifier — anything that sits *below* the wrapper's typed operations), grep the codebase for it. Exactly one file should mention the primitive: the wrapper itself. Two or more is a falsified encapsulation, full stop. No labels, no narratives, no judgement — the grep returns 1 or it doesn't.
+
+_How to apply_:
+
+- For each module whose stated concern is "wrap interface X", enumerate the raw primitives it exports alongside its typed operations.
+- Grep the codebase for each primitive. One consumer (the wrapper) passes. Two or more consumers means the encapsulation is fiction.
+- When grep returns more than one file, pick one: (a) lift the second caller's usage into a new typed operation on the wrapper, then route the caller through it; (b) demote the wrapper's claim — rename it or rewrite its haddock so it no longer pretends to own the interface.
+- Treat haddock cross-references between sibling modules as *confessions*, not documentation. Phrases like "the other half lives in X", "shared from here", "see also X for the actual call" are reports that one concern is split across two modules. Run the grep before accepting the split as intentional.
+- Run this check before approving any change that adds a consumer of a wrapper module's primitive, and on every PR that touches a wrapper module.
+
+_Anti-patterns_:
+
+- A wrapper module exports both typed operations *and* the raw primitive, and a consumer module imports the raw primitive and rebuilds the same shape of call the wrapper was supposed to encapsulate.
+- A wrapper module retains only an ancillary operation (a discovery query, a ping, a health check) while the principal operation lives in a consumer module that reaches past the wrapper. The label outlives the encapsulation.
+- Justifying a leaked primitive with "only one other call site needs it" or "the second consumer is just composing." Composition consumes the wrapper's typed API; reaching for the primitive *is* bypass, not composition. Call-site count is irrelevant — the concern is split or it isn't.
+- Evaluating a module's boundary from its haddock, name, and exports without checking who imports it and what they do with it. The surface is written by the boundary's author and will always agree with the boundary; the import graph is written by consumers and tells you what they actually needed.
 
 ## code-style
 
