@@ -12,7 +12,7 @@ runner should use for that lane. Lives at
 across every repo on this machine. Same convention kolu uses.
 
 Two operations: 'loadHosts' (read the file, drop unknown keys),
-and 'resolveHost' (look up a platform; prompt and persist on
+and 'promptAndPersistHost' (look up a platform; prompt and persist on
 miss). Prompting is only correct in interactive mode — strict
 mode ('CI=true') must precede with a clean miss-test and die
 before the run starts, because there's no TTY mid-run.
@@ -59,7 +59,7 @@ hostFromText :: Text -> Host
 hostFromText = Host
 
 {- | A loaded view of @~\/.config\/ci\/hosts.json@. Newtype around the
-underlying map so 'resolveHost' / 'lookupHost' are the only access
+underlying map so 'promptAndPersistHost' / 'lookupHost' are the only access
 points (no module-external pattern matching on the map shape).
 -}
 newtype Hosts = Hosts (Map Platform Host)
@@ -76,7 +76,7 @@ hostsPath = do
 
 {- | Read the config file. Missing file → empty map (a fresh user has
 no hosts yet, and that's not an error until something tries to
-'resolveHost' a remote platform). Malformed JSON → 'fail'; we'd
+'promptAndPersistHost' a remote platform). Malformed JSON → 'fail'; we'd
 rather refuse than silently drop the whole map.
 
 Unknown platform keys are dropped silently — a future addition to
