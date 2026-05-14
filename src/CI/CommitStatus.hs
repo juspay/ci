@@ -12,8 +12,6 @@ module CI.CommitStatus (postStatusFor) where
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
 import CI.Git (Sha)
 import CI.ProcessCompose.Events (ProcessState (..), ProcessStatus (..))
-import Control.Concurrent (forkIO)
-import Control.Monad (void)
 import Data.Foldable (for_)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -24,14 +22,21 @@ import System.IO (hPutStrLn, stderr)
 -- commit status under the @ci/\<recipe\>@ context. Non-terminal states
 -- ('PsOther') drop on the floor.
 --
--- The @gh api@ POST is forked so a slow or hung gh subprocess doesn't
--- back-pressure the subscription loop in
--- 'CI.ProcessCompose.Events.subscribeStates'. Posting failures are logged
--- to stderr with a @gh:@ prefix and swallowed — the recipe's exit code
--- must not depend on whether a status post succeeded.
+-- Synchronous: each post blocks the subscription loop in
+-- 'CI.ProcessCompose.Events.subscribeStates' until @gh api@ returns. This
+-- is deliberate — forking the post without tracking the resulting
+-- threads loses terminal status posts at process exit (the forked @gh@
+-- calls get killed before completing). At our scale (~10 events per run,
+-- ~hundreds of ms per post) the brief pause is acceptable; if @gh@
+-- hangs ever becomes a real problem, the right fix is a timeout on the
+-- post, not a fire-and-forget fork.
+--
+-- Posting failures are logged to stderr with a @gh:@ prefix and
+-- swallowed — the recipe's exit code must not depend on whether a
+-- status post succeeded.
 postStatusFor :: Repo -> Sha -> ProcessState -> IO ()
 postStatusFor repo sha ps =
-  for_ (psToCommitStatus ps) $ \cs -> void $ forkIO $ do
+  for_ (psToCommitStatus ps) $ \cs -> do
     let ctx = mkContext ps.name
         post = CommitStatusPost {state = cs, context = ctx, description = describe cs}
     result <- postCommitStatus repo sha post
