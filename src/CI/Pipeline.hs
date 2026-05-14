@@ -22,7 +22,7 @@ import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (fetchDump, recipeCommand)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (subscribeStates)
-import CI.Verdict (Outcomes, newOutcomes, readOutcomes, recordOutcome, runVerdictFrom)
+import CI.Verdict (newOutcomes, readOutcomes, recordOutcome, runVerdictFrom)
 import Control.Concurrent.Async (link, wait, withAsync)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
@@ -71,7 +71,9 @@ runLocal dirs passthrough = do
     link obs
     _ <- runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
     wait obs
-    renderVerdict outcomes
+    (code, ls) <- runVerdictFrom <$> readOutcomes outcomes
+    mapM_ TIO.putStrLn ls
+    exitWith code
 
 -- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
 -- via @git worktree@ at @.ci\/worktree@ → start process-compose with its
@@ -109,18 +111,9 @@ runStrict dirs passthrough = do
       link obs
       _ <- runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
       wait obs
-      renderVerdict outcomes
-
--- | Print the per-recipe summary and exit with the verdict's code.
--- Called after 'wait obs' in both run modes; by that point the
--- WebSocket has closed (which only happens once process-compose
--- exits), so every terminal state event has been folded into the
--- accumulator.
-renderVerdict :: Outcomes -> IO ()
-renderVerdict outcomes = do
-  (code, ls) <- runVerdictFrom <$> readOutcomes outcomes
-  mapM_ TIO.putStrLn ls
-  exitWith code
+      (code, ls) <- runVerdictFrom <$> readOutcomes outcomes
+      mapM_ TIO.putStrLn ls
+      exitWith code
 
 -- | Walk @just --dump@ → root → reachable subgraph → topologically
 -- lowered DAG → 'ProcessCompose' YAML. The @workingDir@ argument is set in
