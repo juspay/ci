@@ -23,13 +23,22 @@ ghcid:
     ghcid -T :main
 
 # Smoke-test the dump-yaml subcommand: the `ci` process is declared and its
-# command runs `just --no-deps <recipe>` directly (no wrapper).
+# command runs `just --no-deps <recipe>` directly. Second pass exercises
+# the submodule fixture — verifies the runner sees a [metadata("ci")]
+# recipe living inside a submodule, emits fully-qualified process keys
+# (`sub::entry`, `sub::a`, `sub::shared`), and qualifies the invocation
+# argument that goes to `just --no-deps`.
 [linux]
 run-check: build
     echo "Running on Linux $(uname -srm)"
     nix run . -- dump-yaml | tee /tmp/ci-out
     grep -qE '^  ci:' /tmp/ci-out
     grep -qE -- '--no-deps' /tmp/ci-out
+    (cd test/fixtures/with-module && {{ justfile_directory() }}/result/bin/ci dump-yaml) | tee /tmp/ci-out-mod
+    grep -qE '^  sub::entry:' /tmp/ci-out-mod
+    grep -qE '^  sub::a:' /tmp/ci-out-mod
+    grep -qE '^  sub::shared:' /tmp/ci-out-mod
+    grep -qE -- '--no-deps sub::entry' /tmp/ci-out-mod
 
 [macos]
 run-check: build
@@ -37,3 +46,8 @@ run-check: build
     nix run . -- dump-yaml | tee "${TMPDIR%/}/ci-out"
     grep -qE '^  ci:' "${TMPDIR%/}/ci-out"
     grep -qE -- '--no-deps' "${TMPDIR%/}/ci-out"
+    (cd test/fixtures/with-module && {{ justfile_directory() }}/result/bin/ci dump-yaml) | tee "${TMPDIR%/}/ci-out-mod"
+    grep -qE '^  sub::entry:' "${TMPDIR%/}/ci-out-mod"
+    grep -qE '^  sub::a:' "${TMPDIR%/}/ci-out-mod"
+    grep -qE '^  sub::shared:' "${TMPDIR%/}/ci-out-mod"
+    grep -qE -- '--no-deps sub::entry' "${TMPDIR%/}/ci-out-mod"

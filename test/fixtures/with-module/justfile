@@ -1,0 +1,6 @@
+mod sub 'sub.just'
+
+# Top-level recipe (not the pipeline root). The pipeline root is `sub::entry`
+# inside the submodule, tagged [metadata("ci")] there.
+default:
+    @just --list
