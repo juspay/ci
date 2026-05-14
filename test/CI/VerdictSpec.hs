@@ -7,8 +7,7 @@
 -- down without spinning up process-compose.
 module CI.VerdictSpec (spec) where
 
-import CI.Gh (CommitStatus (..))
-import CI.Verdict (runVerdictFrom)
+import CI.Verdict (RecipeOutcome (..), runVerdictFrom)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import System.Exit (ExitCode (..))
@@ -17,25 +16,25 @@ import Test.Hspec
 spec :: Spec
 spec = describe "runVerdictFrom" $ do
   it "exits 0 and reports success when every recipe succeeded" $ do
-    let (code, ls) = runVerdictFrom $ Map.fromList [("a", Success), ("b", Success)]
+    let (code, ls) = runVerdictFrom $ Map.fromList [("a", Succeeded), ("b", Succeeded)]
     code `shouldBe` ExitSuccess
     any ("a" `T.isInfixOf`) ls `shouldBe` True
     any ("b" `T.isInfixOf`) ls `shouldBe` True
 
-  it "exits non-zero when any recipe is Failure" $ do
-    let (code, _) = runVerdictFrom $ Map.fromList [("a", Success), ("b", Failure)]
+  it "exits non-zero when any recipe Failed" $ do
+    let (code, _) = runVerdictFrom $ Map.fromList [("a", Succeeded), ("b", Failed)]
     code `shouldBe` ExitFailure 1
 
-  it "exits non-zero when any recipe is Error (skipped)" $ do
-    let (code, _) = runVerdictFrom $ Map.fromList [("a", Success), ("b", Error)]
+  it "exits non-zero when any recipe was Skipped (dep failed)" $ do
+    let (code, _) = runVerdictFrom $ Map.fromList [("a", Succeeded), ("b", Skipped)]
     code `shouldBe` ExitFailure 1
 
   it "exits non-zero when any recipe is still Pending (never reached terminal state)" $ do
-    let (code, _) = runVerdictFrom $ Map.fromList [("a", Success), ("b", Pending)]
+    let (code, _) = runVerdictFrom $ Map.fromList [("a", Succeeded), ("b", Pending)]
     code `shouldBe` ExitFailure 1
 
   it "lists every recipe in the summary lines" $ do
-    let (_, ls) = runVerdictFrom $ Map.fromList [("alpha", Success), ("beta", Failure), ("gamma", Error)]
+    let (_, ls) = runVerdictFrom $ Map.fromList [("alpha", Succeeded), ("beta", Failed), ("gamma", Skipped)]
         joined = T.unlines ls
     "alpha" `T.isInfixOf` joined `shouldBe` True
     "beta" `T.isInfixOf` joined `shouldBe` True

@@ -1,3 +1,4 @@
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -7,19 +8,17 @@
 -- the orchestrator calls 'runVerdictFrom' on the map to derive the
 -- pipeline's overall 'ExitCode' and a printable summary.
 --
--- Why this lives outside "CI.Pipeline": the orchestrator owns the
--- run-sequence axis (clean-tree → worktree → spawn → wait → exit) and
--- the verdict owns a different axis — what counts as failure, how the
--- per-recipe summary is rendered. Splitting the two keeps either from
--- growing the other's complexity.
---
--- Why this lives outside "CI.CommitStatus": that module owns the GitHub
--- wire mapping ('ProcessState' → 'CommitStatus' POST). The accumulator
--- consumes 'CommitStatus' values (reusing 'psToCommitStatus' so both
--- the GH posts and the local verdict agree on the same predicate)
--- but adds nothing to the GH-posting story.
+-- 'RecipeOutcome' is local to this module: GitHub's 'CommitStatus' is a
+-- different concept (it covers @Pending@ — \"check is open\" — which is
+-- a transition, not an outcome) and tying verdict storage to it would
+-- be borrowing semantics. The boundary conversion lives in
+-- 'recordOutcome' and routes through 'CI.CommitStatus.psToCommitStatus'
+-- so the GH check page and the local verdict agree by construction —
+-- agreement comes from sharing the underlying predicate, not from
+-- sharing the storage type.
 module CI.Verdict
-  ( Outcomes,
+  ( RecipeOutcome (..),
+    Outcomes,
     newOutcomes,
     recordOutcome,
     readOutcomes,
@@ -28,7 +27,7 @@ module CI.Verdict
 where
 
 import CI.CommitStatus (psToCommitStatus)
-import CI.Gh (CommitStatus (..))
+import qualified CI.Gh as Gh
 import CI.Justfile (RecipeName)
 import CI.ProcessCompose.Events (ProcessState (..))
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
@@ -36,16 +35,30 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Text.Display (display)
+import Data.Text.Display (Display (..), display)
 import System.Exit (ExitCode (..))
+
+-- | The terminal outcome of one recipe in a pipeline run. 'Pending'
+-- means \"the observer never saw a terminal state event for this
+-- recipe\" (the seed value) — distinguishing it from a process that
+-- ran and succeeded keeps the verdict honest when pc crashes before
+-- scheduling a recipe.
+data RecipeOutcome = Pending | Succeeded | Failed | Skipped
+  deriving stock (Show, Eq)
+
+instance Display RecipeOutcome where
+  displayBuilder Pending = "pending"
+  displayBuilder Succeeded = "succeeded"
+  displayBuilder Failed = "failed"
+  displayBuilder Skipped = "skipped"
 
 -- | The mutable per-run state the observer folds into. Keyed by
 -- 'ProcessState.name' (the process-compose-side process name), which
 -- for this project's lowering is the recipe's fully-qualified name.
 -- Opaque; minted only by 'newOutcomes' and read only by 'readOutcomes'.
-newtype Outcomes = Outcomes (IORef (Map Text CommitStatus))
+newtype Outcomes = Outcomes (IORef (Map Text RecipeOutcome))
 
--- | Pre-populate the outcome map with @Pending@ for every recipe in
+-- | Pre-populate the outcome map with 'Pending' for every recipe in
 -- the lowered pipeline. Without this, a recipe that pc never emits a
 -- state event for (e.g. pc crashed before scheduling it) would be
 -- absent from the final map entirely; with it, missing-from-pc
@@ -55,46 +68,56 @@ newOutcomes :: [RecipeName] -> IO Outcomes
 newOutcomes recipes =
   Outcomes <$> newIORef (Map.fromList [(display r, Pending) | r <- recipes])
 
--- | Fold one 'ProcessState' event into the outcome map. Non-terminal
--- events (those for which 'psToCommitStatus' returns 'Nothing') are
--- dropped; terminal events overwrite the recipe's slot. This is the
--- same derivation 'CI.CommitStatus.postStatusFor' uses for its GH
--- post, so the local verdict and the GH check page agree by
--- construction.
+-- | Fold one 'ProcessState' event into the outcome map. Routes through
+-- 'psToCommitStatus' (so the GH check page and this local verdict
+-- agree on the underlying predicate) then converts the resulting
+-- 'CommitStatus' to a 'RecipeOutcome'. 'CommitStatus' appears only as
+-- an intermediate value here — it never reaches the storage type or
+-- the verdict signature.
 --
 -- Safe to call from any thread; the underlying 'atomicModifyIORef''
 -- serializes concurrent writes. In practice only the observer thread
 -- writes.
 recordOutcome :: Outcomes -> ProcessState -> IO ()
 recordOutcome (Outcomes ref) ps =
-  case psToCommitStatus ps of
+  case psToCommitStatus ps >>= commitStatusToOutcome of
     Nothing -> pure ()
-    Just cs -> atomicModifyIORef' ref (\m -> (Map.insert ps.name cs m, ()))
+    Just o -> atomicModifyIORef' ref (\m -> (Map.insert ps.name o m, ()))
+
+-- | Boundary conversion. GitHub's 'Pending' is a transition (\"running\"
+-- on the wire) rather than a terminal outcome, so it returns 'Nothing'
+-- — keeping the seed 'Pending' in place until a real terminal event
+-- arrives.
+commitStatusToOutcome :: Gh.CommitStatus -> Maybe RecipeOutcome
+commitStatusToOutcome Gh.Pending = Nothing
+commitStatusToOutcome Gh.Success = Just Succeeded
+commitStatusToOutcome Gh.Failure = Just Failed
+commitStatusToOutcome Gh.Error = Just Skipped
 
 -- | Snapshot the accumulator. Call once, after the observer subscription
 -- has closed (the WebSocket closes when process-compose exits, so by
 -- this point every terminal event has been folded in).
-readOutcomes :: Outcomes -> IO (Map Text CommitStatus)
+readOutcomes :: Outcomes -> IO (Map Text RecipeOutcome)
 readOutcomes (Outcomes ref) = readIORef ref
 
 -- | Derive the pipeline's exit code and a printable summary from the
 -- accumulated outcomes. The exit code is 0 iff every recipe finished
--- 'Success'; anything else — 'Failure', 'Error' (skipped), or a
--- lingering 'Pending' — flips it to 'ExitFailure' 1.
+-- 'Succeeded'; anything else — 'Failed', 'Skipped', or a lingering
+-- 'Pending' — flips it to 'ExitFailure' 1.
 --
 -- Pure: the 'IORef' read happens in the caller; this function takes a
 -- snapshot map and is trivial to test against handcrafted inputs.
-runVerdictFrom :: Map Text CommitStatus -> (ExitCode, [Text])
+runVerdictFrom :: Map Text RecipeOutcome -> (ExitCode, [Text])
 runVerdictFrom outcomes = (code, summaryLines)
   where
     entries = Map.toAscList outcomes
-    failed = filter ((/= Success) . snd) entries
+    failed = filter ((/= Succeeded) . snd) entries
     code
       | null failed = ExitSuccess
       | otherwise = ExitFailure 1
     width = maximum (0 : map (T.length . fst) entries)
     pad n = n <> T.replicate (width - T.length n) " "
-    recipeLine (n, cs) = "  " <> pad n <> "  " <> display cs
+    recipeLine (n, o) = "  " <> pad n <> "  " <> display o
     verdictLine
       | null failed = "all " <> tshow (length entries) <> " recipes succeeded"
       | otherwise =
