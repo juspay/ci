@@ -14,7 +14,7 @@ module CI.Pipeline
   )
 where
 
-import CI.CommitStatus (postConsumer)
+import CI.CommitStatus (postStatusFor)
 import CI.Entrypoint (findEntrypoint)
 import CI.Gh (viewRepo)
 import CI.Git (ensureCleanTree, resolveSha, withSnapshotWorktree)
@@ -67,7 +67,7 @@ runStrict dirs extra = do
   sha <- dieOnLeft =<< resolveSha
   withSnapshotWorktree dirs.snap $ do
     pc <- buildProcessCompose (Just dirs.snap)
-    withAsync (subscribeStates dirs.sock (postConsumer repo sha)) $ \obs -> do
+    withAsync (subscribeStates dirs.sock (postStatusFor repo sha)) $ \obs -> do
       -- 'link' propagates an observer crash to this thread, so any path
       -- past 'wait' below is a clean WebSocket close (process-compose
       -- shutdown closes the WS on its own).
