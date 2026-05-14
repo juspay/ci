@@ -1,6 +1,5 @@
 -- | Test-suite entry point: composes the per-module hspec specs into a
--- single run. Add new specs by importing them here and chaining their
--- 'Spec' values into 'main'.
+-- single run.
 module Main (main) where
 
 import qualified CI.JustfileSpec

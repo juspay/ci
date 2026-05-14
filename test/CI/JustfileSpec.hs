@@ -70,11 +70,8 @@ spec = do
           Left _ -> pure ()
           Right _ -> expectationFailure "expected Left on malformed JSON"
 
--- | Helpers that turn the "decode must succeed" and "key must be
--- present" preconditions into structured hspec failures rather than
--- the bare 'Map.!'/'error' panics the rule banner forbids. Both use
--- 'fail', which in 'IO' throws an exception hspec catches and reports
--- with the supplied message — no partial functions in either path.
+-- | Decode a fixture into the recipe map; 'fail' in 'IO' raises an
+-- exception hspec catches and reports with the supplied message.
 decodeOrFail :: BS.ByteString -> IO (Map.Map RecipeName Recipe)
 decodeOrFail bs = case parseDump bs of
   Right m -> pure m
