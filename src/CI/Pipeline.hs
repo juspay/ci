@@ -20,7 +20,7 @@ import CI.Root (findRoot)
 import CI.Gh (viewRepo)
 import CI.Git (ensureCleanTree, resolveSha, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
-import CI.Justfile (RecipeName, fetchDump, recipeCommand)
+import CI.Justfile (fetchDump, recipeCommand)
 import CI.LogPath (logDirFor, logPathFor)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (subscribeStates)
@@ -110,24 +110,22 @@ data RunMode
 
 -- | Walk @just --dump@ → root → reachable subgraph → topologically
 -- lowered DAG → 'ProcessCompose' YAML, parameterised by the run mode.
+-- The two per-process knobs ('workingDir' and 'logLocation') each
+-- pattern-match on 'RunMode' directly — the sum-type discipline reaches
+-- the YAML emitter rather than being unpacked into a @(Maybe, Maybe)@
+-- pair one line up.
 buildProcessCompose :: RunMode -> IO ProcessCompose
 buildProcessCompose mode = do
   recipes <- dieOnLeft =<< fetchDump
   root <- dieOnLeft $ findRoot recipes
   reachable <- dieOnLeft $ reachableSubgraph root recipes
   graph <- dieOnLeft $ lowerToRunnerGraph reachable
-  let (workingDir, logDir) = case mode of
-        LocalRun -> (Nothing, Nothing)
-        StrictRun wt ld -> (Just wt, Just ld)
-  pure $ toProcessCompose workingDir recipeCommand (mkLogLocation logDir) graph
-
--- | Per-recipe log file path: @\<logDir\>\/\<recipe\>.log@ when a log
--- directory is configured, 'Nothing' otherwise. The filename convention
--- itself ('CI.LogPath.logPathFor') is shared with the status-post
--- side so the on-disk file and the path in the GitHub description
--- cannot drift.
-mkLogLocation :: Maybe FilePath -> RecipeName -> Maybe FilePath
-mkLogLocation logDir recipe = (`logPathFor` recipe) <$> logDir
+  pure $ toProcessCompose (workingDir mode) recipeCommand (logLocation mode) graph
+  where
+    workingDir LocalRun = Nothing
+    workingDir (StrictRun wt _) = Just wt
+    logLocation LocalRun = const Nothing
+    logLocation (StrictRun _ ld) = Just . logPathFor ld
 
 -- | The single 'die' site in the project: every recoverable failure
 -- mode threads up through @Either e a@ to this boundary, where the
