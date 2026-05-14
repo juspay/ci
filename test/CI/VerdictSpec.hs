@@ -13,6 +13,10 @@ import qualified Data.Text as T
 import System.Exit (ExitCode (..))
 import Test.Hspec
 
+-- The map literals below use bare string keys; @-XOverloadedStrings@
+-- plus 'CI.Justfile.RecipeName's 'IsString' instance gives them the
+-- right type. 'runVerdictFrom''s signature drives inference.
+
 spec :: Spec
 spec = describe "runVerdictFrom" $ do
   it "exits 0 and reports success when every recipe succeeded" $ do

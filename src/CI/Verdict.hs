@@ -25,7 +25,7 @@ module CI.Verdict
   )
 where
 
-import CI.Justfile (RecipeName)
+import CI.Justfile (RecipeName, recipeNameFromText)
 import CI.ProcessCompose.Events (ProcessState (..), TerminalStatus (..), psToTerminalStatus)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.Map.Strict (Map)
@@ -49,11 +49,11 @@ instance Display RecipeOutcome where
   displayBuilder Failed = "failed"
   displayBuilder Skipped = "skipped"
 
--- | The mutable per-run state the observer folds into. Keyed by
--- 'ProcessState.name' (the process-compose-side process name), which
--- for this project's lowering is the recipe's fully-qualified name.
--- Opaque; minted only by 'newOutcomes' and read only by 'readOutcomes'.
-newtype Outcomes = Outcomes (IORef (Map Text RecipeOutcome))
+-- | The mutable per-run state the observer folds into. Keyed by the
+-- typed 'RecipeName' so the seed identity and the event-side identity
+-- are the same value (no implicit @Text@ convention to drift). Opaque;
+-- minted only by 'newOutcomes' and read only by 'readOutcomes'.
+newtype Outcomes = Outcomes (IORef (Map RecipeName RecipeOutcome))
 
 -- | Pre-populate the outcome map with 'Pending' for every recipe in
 -- the lowered pipeline. Without this, a recipe that pc never emits a
@@ -63,7 +63,7 @@ newtype Outcomes = Outcomes (IORef (Map Text RecipeOutcome))
 -- as a non-success and rolls into a non-zero exit.
 newOutcomes :: [RecipeName] -> IO Outcomes
 newOutcomes recipes =
-  Outcomes <$> newIORef (Map.fromList [(display r, Pending) | r <- recipes])
+  Outcomes <$> newIORef (Map.fromList [(r, Pending) | r <- recipes])
 
 -- | Fold one 'ProcessState' event into the outcome map. Routes through
 -- 'psToTerminalStatus' — the project-wide ground-truth classifier of
@@ -79,7 +79,14 @@ recordOutcome :: Outcomes -> ProcessState -> IO ()
 recordOutcome (Outcomes ref) ps =
   case terminalToOutcome <$> psToTerminalStatus ps of
     Nothing -> pure ()
-    Just o -> atomicModifyIORef' ref (\m -> (Map.insert ps.name o m, ()))
+    Just o ->
+      -- 'Map.adjust' silently drops events for recipes the seed
+      -- doesn't already know about. That's the right policy: every
+      -- legitimate recipe was seeded by 'newOutcomes', so an unknown
+      -- key means pc emitted a state for something we didn't ask it
+      -- to schedule (which shouldn't happen, and adding ghost entries
+      -- to the map would only confuse the summary).
+      atomicModifyIORef' ref (\m -> (Map.adjust (const o) (recipeNameFromText ps.name) m, ()))
 
 -- | Verdict-side mapping for the three terminal classifications. The
 -- isomorphism with 'TerminalStatus' is deliberate (each pc terminal
@@ -94,7 +101,7 @@ terminalToOutcome TsSkipped = Skipped
 -- | Snapshot the accumulator. Call once, after the observer subscription
 -- has closed (the WebSocket closes when process-compose exits, so by
 -- this point every terminal event has been folded in).
-readOutcomes :: Outcomes -> IO (Map Text RecipeOutcome)
+readOutcomes :: Outcomes -> IO (Map RecipeName RecipeOutcome)
 readOutcomes (Outcomes ref) = readIORef ref
 
 -- | Derive the pipeline's exit code and a printable summary from the
@@ -104,10 +111,10 @@ readOutcomes (Outcomes ref) = readIORef ref
 --
 -- Pure: the 'IORef' read happens in the caller; this function takes a
 -- snapshot map and is trivial to test against handcrafted inputs.
-runVerdictFrom :: Map Text RecipeOutcome -> (ExitCode, [Text])
+runVerdictFrom :: Map RecipeName RecipeOutcome -> (ExitCode, [Text])
 runVerdictFrom outcomes = (code, summaryLines)
   where
-    entries = Map.toAscList outcomes
+    entries = [(display r, o) | (r, o) <- Map.toAscList outcomes]
     failed = filter ((/= Succeeded) . snd) entries
     code
       | null failed = ExitSuccess
