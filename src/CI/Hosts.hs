@@ -141,11 +141,12 @@ promptHost p = loop
             else pure (Host line)
 
 {- | Write the full 'Hosts' map back to disk. Creates the parent
-directory on first write. Atomic via @writeFile@'s
-truncate-and-write semantics — we don't bother with a tmpfile
-rename because two concurrent @ci@ invocations are already
+directory on first write. Not atomic (truncate-then-write); a
+crash mid-write leaves the file empty. We don't bother with a
+tmpfile rename because two concurrent @ci@ invocations are already
 blocked by other means (see #10), so the only writer is this
-process.
+process, and a partial write is rare enough to be acceptable (the
+file is human-editable anyway).
 -}
 persistHosts :: Hosts -> IO ()
 persistHosts (Hosts m) = do
