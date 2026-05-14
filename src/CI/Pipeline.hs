@@ -35,6 +35,7 @@ import Control.Concurrent.Async (link, wait, withAsync)
 import Control.Monad (foldM, void)
 import Data.Foldable (for_)
 import Data.List (nub)
+import Data.Maybe (isNothing)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
@@ -278,7 +279,7 @@ resolveHostsFor mode localPlat platforms = do
     case mode of
         LocalRun -> foldM addInteractively hosts0 remotes
         StrictRun{} -> do
-            let missing = [p | p <- remotes, Nothing <- [lookupHost p hosts0]]
+            let missing = filter (isNothing . (`lookupHost` hosts0)) remotes
             case missing of
                 [] -> pure hosts0
                 ms -> do
