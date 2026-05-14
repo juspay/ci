@@ -40,9 +40,10 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display (..), display)
 import qualified Data.Text.IO as TIO
-import System.Directory (createDirectoryIfMissing, doesFileExist, getHomeDirectory)
+import System.Directory (createDirectoryIfMissing, getHomeDirectory)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hFlush, stderr)
+import System.IO.Error (isDoesNotExistError)
 
 {- | An SSH destination — anything @ssh@ accepts as @[user@]host[:port]@.
 Opaque; minted only by 'hostFromText' or via JSON decode in 'loadHosts'.
@@ -87,11 +88,11 @@ newer binaries.
 loadHosts :: IO Hosts
 loadHosts = do
     path <- hostsPath
-    exists <- doesFileExist path
-    if not exists
-        then pure (Hosts Map.empty)
-        else do
-            bs <- BS.readFile path
+    result <- try @IOException $ BS.readFile path
+    case result of
+        Left e | isDoesNotExistError e -> pure (Hosts Map.empty)
+        Left e -> fail $ "ci: cannot read " <> path <> ": " <> show e
+        Right bs ->
             case eitherDecodeStrict @(Map Text Text) bs of
                 Left err -> fail $ "ci: malformed " <> path <> ": " <> err
                 Right raw ->
