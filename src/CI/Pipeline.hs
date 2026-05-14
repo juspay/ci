@@ -21,7 +21,7 @@ import CI.CommitStatus (postStatusFor, seedPending)
 import CI.Gh (viewRepo)
 import CI.Git (Sha, ensureCleanTree, resolveSha, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
-import CI.Hosts (Hosts, hostsPath, loadHosts, lookupHost, resolveHost)
+import CI.Hosts (Hosts, hostsPath, loadHosts, lookupHost, promptAndPersistHost)
 import CI.Justfile (Attribute (..), Recipe (..), RecipeName, fetchDump)
 import CI.LogPath (logDirFor, logPathFor, platformDir)
 import CI.Node (NodeId (..), parseNodeId)
@@ -288,7 +288,7 @@ resolveHostsFor mode localPlat platforms = do
                             <> "; missing entries for: "
                             <> T.unpack (T.intercalate ", " (display <$> ms))
   where
-    addInteractively hs p = snd <$> resolveHost p hs
+    addInteractively hs p = snd <$> promptAndPersistHost p hs
 
 {- | The pipeline's SHA-resolution state, expressed as one value
 instead of a 'Maybe Sha' that has to agree with an independent

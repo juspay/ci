@@ -24,7 +24,7 @@ module CI.Hosts (
     hostsPath,
     loadHosts,
     lookupHost,
-    resolveHost,
+    promptAndPersistHost,
 )
 where
 
@@ -104,18 +104,18 @@ we need without prompting?).
 lookupHost :: Platform -> Hosts -> Maybe Host
 lookupHost p (Hosts m) = Map.lookup p m
 
-{- | Look up @p@; on miss, prompt the user for a host on @stderr@,
+{- | Look up @p@; on miss, **prompt the user on @stderr@ for a host**,
 read a line from @stdin@, persist the result back to the config
 file, and return the new 'Host'. Reuses the prompt convention
 kolu uses (one question per platform, persist on enter).
-
-The caller is responsible for ensuring this is only invoked in
-interactive contexts — strict mode ('CI=true') has no TTY and
-should pre-check with 'lookupHost' and die before the pipeline
-starts.
+Name carries the interactive intent — every call site reads
+@promptAndPersistHost@ in the chain, so non-interactive callers
+(@--json@, MCP server, batch jobs) won't reach for it by accident.
+Strict mode ('CI=true') has no TTY and stays on 'lookupHost' +
+fail-fast at startup.
 -}
-resolveHost :: Platform -> Hosts -> IO (Host, Hosts)
-resolveHost p hs@(Hosts m) = case Map.lookup p m of
+promptAndPersistHost :: Platform -> Hosts -> IO (Host, Hosts)
+promptAndPersistHost p hs@(Hosts m) = case Map.lookup p m of
     Just h -> pure (h, hs)
     Nothing -> do
         h <- promptHost p
