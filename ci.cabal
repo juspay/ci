@@ -19,6 +19,7 @@ library
                       CI.ProcessCompose.Events
                       CI.Root
                       CI.Subprocess
+                      CI.Verdict
     build-depends:
         , aeson
         , algebraic-graphs
@@ -56,6 +57,7 @@ test-suite ci-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     other-modules:    CI.JustfileSpec
+                      CI.VerdictSpec
     build-depends:
         , base
         , bytestring

@@ -22,8 +22,10 @@ import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Justfile (fetchDump, recipeCommand)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (subscribeStates)
+import CI.Verdict (Outcomes, newOutcomes, readOutcomes, recordOutcome, runVerdictFrom)
 import Control.Concurrent.Async (link, wait, withAsync)
 import qualified Data.Text as T
+import qualified Data.Text.IO as TIO
 import Data.Text.Display (Display, display)
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.Exit (die, exitWith)
@@ -54,20 +56,41 @@ ensureRunDir = do
         pcLog = dir </> "pc.log"
       }
 
--- | Local mode: live working tree, no observer, no status posts. The
--- process-compose log goes to @.ci\/pc.log@ so even local runs don't leak
--- into @\$TMPDIR@. Process-compose binds @.ci\/pc.sock@ in both modes
--- so the API surface is available for future consumers (e.g. an MCP
--- server).
+-- | Local mode: live working tree, no GitHub status posts. The
+-- observer still runs — its only consumer is the verdict accumulator,
+-- which gives developer runs the same end-of-run summary strict mode
+-- produces. Process-compose's log goes to @.ci\/pc.log@ so even local
+-- runs don't leak into @\$TMPDIR@; the same UDS at @.ci\/pc.sock@ is
+-- bound so the API surface is available for future consumers (e.g.
+-- an MCP server).
 runLocal :: RunDir -> [String] -> IO ()
 runLocal dirs passthrough = do
   pc <- buildProcessCompose Nothing
-  runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc >>= exitWith
+  outcomes <- newOutcomes (processNames pc)
+  withAsync (subscribeStates dirs.sock (recordOutcome outcomes)) $ \obs -> do
+    link obs
+    _ <- runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
+    wait obs
+    renderVerdict outcomes
 
 -- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
 -- via @git worktree@ at @.ci\/worktree@ → start process-compose with its
--- API on @.ci\/pc.sock@ → subscribe to state events and post commit
--- statuses concurrently with the pipeline run.
+-- API on @.ci\/pc.sock@ → subscribe to state events, post commit
+-- statuses, and accumulate the per-recipe outcome map concurrently
+-- with the pipeline run.
+--
+-- The two consumers of the state stream — 'postStatusFor' (GitHub
+-- write) and 'recordOutcome' (local accumulator) — are composed at
+-- this single call site rather than entangled inside the observer or
+-- the GH-posting code. Both share 'CI.CommitStatus.psToCommitStatus'
+-- as the underlying outcome predicate, so the GH check page and the
+-- local verdict agree on which recipes succeeded.
+--
+-- Process-compose's own exit code is intentionally ignored — with
+-- @restart: no@ on every process it no longer reflects pipeline
+-- outcome (a failed recipe leaves pc exiting 0). The accumulated
+-- outcome map is the source of truth; 'renderVerdict' derives the
+-- final 'ExitCode' from it.
 runStrict :: RunDir -> [String] -> IO ()
 runStrict dirs passthrough = do
   dieOnLeft =<< ensureCleanTree
@@ -75,15 +98,29 @@ runStrict dirs passthrough = do
   sha <- dieOnLeft =<< resolveSha
   withSnapshotWorktree dirs.worktreePath $ do
     pc <- buildProcessCompose (Just dirs.worktreePath)
-    seedPending repo sha (processNames pc)
-    withAsync (subscribeStates dirs.sock (postStatusFor repo sha)) $ \obs -> do
+    let recipes = processNames pc
+    seedPending repo sha recipes
+    outcomes <- newOutcomes recipes
+    let onState ps = postStatusFor repo sha ps >> recordOutcome outcomes ps
+    withAsync (subscribeStates dirs.sock onState) $ \obs -> do
       -- 'link' propagates an observer crash to this thread, so any path
       -- past 'wait' below is a clean WebSocket close (process-compose
       -- shutdown closes the WS on its own).
       link obs
-      ec <- runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
+      _ <- runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
       wait obs
-      exitWith ec
+      renderVerdict outcomes
+
+-- | Print the per-recipe summary and exit with the verdict's code.
+-- Called after 'wait obs' in both run modes; by that point the
+-- WebSocket has closed (which only happens once process-compose
+-- exits), so every terminal state event has been folded into the
+-- accumulator.
+renderVerdict :: Outcomes -> IO ()
+renderVerdict outcomes = do
+  (code, ls) <- runVerdictFrom <$> readOutcomes outcomes
+  mapM_ TIO.putStrLn ls
+  exitWith code
 
 -- | Walk @just --dump@ → root → reachable subgraph → topologically
 -- lowered DAG → 'ProcessCompose' YAML. The @workingDir@ argument is set in

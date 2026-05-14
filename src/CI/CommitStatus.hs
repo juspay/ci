@@ -8,7 +8,7 @@
 -- encoding of each state, and the form-field names are gh-API details
 -- owned by "CI.Gh". Multi-platform may eventually require a
 -- @\<system\>\/\<recipe\>@ shape (see [#14](https://github.com/juspay/ci/issues/14)).
-module CI.CommitStatus (postStatusFor, seedPending) where
+module CI.CommitStatus (postStatusFor, seedPending, psToCommitStatus) where
 
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
 import CI.Git (Sha)
@@ -84,6 +84,13 @@ describe Success = "Succeeded"
 describe Failure = "Failed"
 describe Error = "Errored"
 
+-- | Translate one process-compose 'ProcessState' event into the
+-- 'CommitStatus' it surfaces under. Non-terminal states ('PsOther')
+-- return 'Nothing' so consumers can drop them. Exported because the
+-- local verdict accumulator in "CI.Verdict" reuses the same predicate
+-- to derive the pipeline's exit code — keeping one derivation means
+-- the GitHub status page and the local exit code agree on which
+-- recipes counted as successful.
 psToCommitStatus :: ProcessState -> Maybe CommitStatus
 psToCommitStatus ps = case (ps.status, ps.exit_code) of
   (PsRunning, _) -> Just Pending
