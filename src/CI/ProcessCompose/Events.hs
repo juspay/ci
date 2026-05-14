@@ -77,7 +77,7 @@ data ProcessState = ProcessState
 -- verdict's outcome classification in agreement by construction
 -- without forcing either to import the other.
 data TerminalStatus = TsSucceeded | TsFailed | TsSkipped
-  deriving stock (Show, Eq)
+  deriving stock (Show, Eq, Bounded, Enum)
 
 -- | The single ground-truth classifier of a 'ProcessState' event into
 -- a terminal outcome. Non-terminal events ('PsRunning', 'PsOther')

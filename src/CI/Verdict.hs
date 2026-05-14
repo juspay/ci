@@ -22,6 +22,7 @@ module CI.Verdict
     recordOutcome,
     readOutcomes,
     runVerdictFrom,
+    terminalToOutcome,
   )
 where
 

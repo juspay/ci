@@ -7,7 +7,11 @@
 -- down without spinning up process-compose.
 module CI.VerdictSpec (spec) where
 
-import CI.Verdict (RecipeOutcome (..), runVerdictFrom)
+import CI.CommitStatus (terminalToCommitStatus)
+import CI.Gh (CommitStatus (Success))
+import CI.ProcessCompose.Events (TerminalStatus)
+import CI.Verdict (RecipeOutcome (..), runVerdictFrom, terminalToOutcome)
+import Data.Foldable (for_)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import System.Exit (ExitCode (..))
@@ -47,3 +51,16 @@ spec = describe "runVerdictFrom" $ do
   it "renders the empty map as a successful no-op" $ do
     let (code, _) = runVerdictFrom Map.empty
     code `shouldBe` ExitSuccess
+
+  -- | Cross-module invariant: the two consumers of 'TerminalStatus'
+  -- ('terminalToOutcome' in this module, 'terminalToCommitStatus' in
+  -- "CI.CommitStatus") must agree on which terminal classification
+  -- counts as "success". Without this, adding a new 'TerminalStatus'
+  -- constructor and updating only one consumer would compile cleanly
+  -- and produce a green GitHub check beside a red local exit (or
+  -- vice versa). 'Bounded'/'Enum' on 'TerminalStatus' makes the
+  -- enumeration future-proof against new constructors.
+  it "terminalToOutcome and terminalToCommitStatus agree on the success case" $
+    for_ [minBound .. maxBound :: TerminalStatus] $ \ts ->
+      (terminalToOutcome ts == Succeeded)
+        `shouldBe` (terminalToCommitStatus ts == Success)

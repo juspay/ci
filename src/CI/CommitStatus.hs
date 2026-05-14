@@ -8,7 +8,7 @@
 -- encoding of each state, and the form-field names are gh-API details
 -- owned by "CI.Gh". Multi-platform may eventually require a
 -- @\<system\>\/\<recipe\>@ shape (see [#14](https://github.com/juspay/ci/issues/14)).
-module CI.CommitStatus (postStatusFor, seedPending) where
+module CI.CommitStatus (postStatusFor, seedPending, terminalToCommitStatus) where
 
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
 import CI.Git (Sha)
