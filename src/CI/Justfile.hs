@@ -20,6 +20,7 @@ module CI.Justfile
 
     -- * Operations
     FetchError,
+    ParseError,
     fetchDump,
     parseDump,
     recipeCommand,
@@ -29,7 +30,7 @@ where
 import CI.Subprocess (SubprocessError, runSubprocess)
 import Data.Aeson (FromJSON (parseJSON), FromJSONKey, Options (..), ToJSON, ToJSONKey, Value (Object, String), defaultOptions, eitherDecodeStrict, genericParseJSON)
 import qualified Data.Aeson.KeyMap as KeyMap
-import Data.Bifunctor (bimap)
+import Data.Bifunctor (bimap, first)
 import qualified Data.ByteString as BS
 import Data.List (dropWhileEnd)
 import Data.Map.Strict (Map)
@@ -163,18 +164,29 @@ data Dump = Dump
   deriving stock (Generic)
   deriving anyclass (FromJSON)
 
--- | Failures from 'fetchDump'.
+-- | Failures from 'fetchDump' — either the subprocess died or its
+-- output didn't decode. 'FetchParseError' carries a 'ParseError' so
+-- callers that only ran the pure 'parseDump' don't pattern-match a
+-- constructor that path can't produce.
 data FetchError
   = -- | The @just@ subprocess exited non-zero.
     FetchProcessError SubprocessError
-  | -- | The @just@ subprocess succeeded but its JSON output didn't decode. Carries aeson's underlying message.
-    FetchParseError String
+  | -- | The @just@ subprocess succeeded but its JSON output didn't decode.
+    FetchParseError ParseError
+  deriving stock (Show)
+
+-- | Failures from 'parseDump'. Decode-only — there is no subprocess
+-- failure mode on this path. Carries aeson's underlying message.
+newtype ParseError = ParseError {message :: String}
   deriving stock (Show)
 
 instance Display FetchError where
   displayBuilder (FetchProcessError e) = displayBuilder e
-  displayBuilder (FetchParseError msg) =
-    "failed to decode just dump: " <> displayBuilder (T.pack msg)
+  displayBuilder (FetchParseError e) = displayBuilder e
+
+instance Display ParseError where
+  displayBuilder e =
+    "failed to decode just dump: " <> displayBuilder (T.pack e.message)
 
 -- | Invoke @just --dump --dump-format json@ and return a single flat
 -- recipe map keyed by fully-qualified name. Pipeline-shaped: subprocess →
@@ -185,7 +197,7 @@ fetchDump = do
   result <- runSubprocess "just --dump --dump-format json" justBin ["--dump", "--dump-format", "json"] ""
   pure $ case result of
     Left e -> Left (FetchProcessError e)
-    Right stdout -> parseDump (TE.encodeUtf8 (T.pack stdout))
+    Right stdout -> first FetchParseError (parseDump (TE.encodeUtf8 (T.pack stdout)))
 
 -- | Decode a @just --dump --dump-format json@ payload into the flat,
 -- qualified recipe map. The 'just' top-level + submodule tree is
@@ -196,8 +208,8 @@ fetchDump = do
 -- leaves this module. Pure: separated from 'fetchDump' so tests can
 -- exercise the schema + flatten + qualify pipeline without invoking the
 -- @just@ subprocess.
-parseDump :: BS.ByteString -> Either FetchError (Map RecipeName Recipe)
-parseDump bs = bimap FetchParseError (qualifyDeps . flattenDump) (eitherDecodeStrict @Dump bs)
+parseDump :: BS.ByteString -> Either ParseError (Map RecipeName Recipe)
+parseDump bs = bimap ParseError (qualifyDeps . flattenDump) (eitherDecodeStrict @Dump bs)
 
 -- | Walk the @Dump@ tree and produce a single map keyed by each recipe's
 -- emitted @namepath@. The keys in the input map (the short recipe names

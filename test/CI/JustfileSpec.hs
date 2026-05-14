@@ -52,7 +52,7 @@ spec = do
         depNames (recipes Map.! "default") `shouldBe` ["sub::leaf"]
 
     context "errors" $ do
-      it "returns FetchParseError on malformed JSON" $
+      it "returns ParseError on malformed JSON" $
         case parseDump "{ not valid json" of
           Left _ -> pure ()
           Right _ -> expectationFailure "expected Left on malformed JSON"
