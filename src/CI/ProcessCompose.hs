@@ -111,22 +111,16 @@ data Availability = Availability
   deriving stock (Generic)
   deriving anyclass (ToJSON)
 
--- | Restart strategy for a process. We only emit 'RestartNo' today —
--- "let the failure stick, surface it in the verdict" — but the closed
--- sum names every value the wire format admits ('ExitOnFailure' would
+-- | Restart strategy for a process. We only emit 'No' today — "let the
+-- failure stick, surface it in the verdict" — but the closed sum
+-- names every value the wire format admits ('ExitOnFailure' would
 -- shut the whole project down on the first failure) so the choice
 -- stays type-safe at the emission site.
-data RestartPolicy = RestartNo | ExitOnFailure
+data RestartPolicy = No | ExitOnFailure
   deriving stock (Generic)
 
--- | Custom instance: 'RestartNo' must serialize to the wire string
--- @"no"@, not the @"restart_no"@ that 'camelTo2' would produce from
--- the Haskell constructor name. Listing the wire value at each
--- constructor decouples the Haskell-side naming from the
--- process-compose vocabulary.
 instance ToJSON RestartPolicy where
-  toJSON RestartNo = "no"
-  toJSON ExitOnFailure = "exit_on_failure"
+  toJSON = genericToJSON snakeCaseTag
 
 -- | Assemble a @process-compose@ config from a pre-validated execution graph.
 -- The caller supplies @mkCommand@, the shell command emitted for each
@@ -144,7 +138,7 @@ toProcessCompose workingDir mkCommand g =
       Process
         { command = mkCommand recipe,
           depends_on = Map.fromSet (const (Dependency ProcessCompletedSuccessfully)) (G.postSet recipe g),
-          availability = Availability {restart = RestartNo, exit_on_skipped = False},
+          availability = Availability {restart = No, exit_on_skipped = False},
           working_dir = workingDir
         }
 
