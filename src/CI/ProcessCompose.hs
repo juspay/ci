@@ -151,9 +151,9 @@ processNames (ProcessCompose ps) = Map.keys ps
 data UpInvocation = UpInvocation
   { sockPath :: FilePath,
     logFile :: FilePath,
-    -- | Caller-supplied extra args appended verbatim after the canned
-    -- baseline; used for @--log-level debug@ and similar overrides.
-    extraArgs :: [String]
+    -- | Caller-supplied args appended verbatim after the canned
+    -- baseline; the @ci run -- ...@ passthrough lands here.
+    passthroughArgs :: [String]
   }
 
 -- | Translate an 'UpInvocation' into the argv vector for @process-compose@.
@@ -162,7 +162,7 @@ data UpInvocation = UpInvocation
 -- one caller ('runProcessCompose') and it never wants TUI.
 toUpArgs :: UpInvocation -> [String]
 toUpArgs up =
-  ["up", "-f", "/dev/stdin", "-t=false", "-L", up.logFile, "-U", "-u", up.sockPath] <> up.extraArgs
+  ["up", "-f", "/dev/stdin", "-t=false", "-L", up.logFile, "-U", "-u", up.sockPath] <> up.passthroughArgs
 
 -- | Spawn @process-compose up@ from the 'UpInvocation', encode the
 -- 'ProcessCompose' as YAML on stdin, and forward the subprocess's exit

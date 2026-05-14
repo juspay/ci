@@ -60,16 +60,16 @@ ensureRunDir = do
 -- so the API surface is available for future consumers (e.g. an MCP
 -- server).
 runLocal :: RunDir -> [String] -> IO ()
-runLocal dirs extra = do
+runLocal dirs passthrough = do
   pc <- buildProcessCompose Nothing
-  runProcessCompose (UpInvocation dirs.sock dirs.pcLog extra) pc >>= exitWith
+  runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc >>= exitWith
 
 -- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
 -- via @git worktree@ at @.ci\/worktree@ → start process-compose with its
 -- API on @.ci\/pc.sock@ → subscribe to state events and post commit
 -- statuses concurrently with the pipeline run.
 runStrict :: RunDir -> [String] -> IO ()
-runStrict dirs extra = do
+runStrict dirs passthrough = do
   dieOnLeft =<< ensureCleanTree
   repo <- dieOnLeft =<< viewRepo
   sha <- dieOnLeft =<< resolveSha
@@ -81,7 +81,7 @@ runStrict dirs extra = do
       -- past 'wait' below is a clean WebSocket close (process-compose
       -- shutdown closes the WS on its own).
       link obs
-      ec <- runProcessCompose (UpInvocation dirs.sock dirs.pcLog extra) pc
+      ec <- runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
       wait obs
       exitWith ec
 

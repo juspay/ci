@@ -36,12 +36,12 @@ main :: IO ()
 main = do
   cmd <- execParser parserInfo
   case cmd of
-    Run extra -> do
+    Run passthrough -> do
       dirs <- ensureRunDir
       strict <- (== Just "true") <$> lookupEnv "CI"
       if strict
-        then runStrict dirs extra
-        else runLocal dirs extra
+        then runStrict dirs passthrough
+        else runLocal dirs passthrough
     DumpYaml -> do
       pc <- buildProcessCompose Nothing
       BS.putStr (Y.encode pc)
