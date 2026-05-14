@@ -87,7 +87,7 @@ runStrict dirs passthrough = do
   createDirectoryIfMissing True logDir
   withSnapshotWorktree dirs.worktreePath $ do
     pc <- buildProcessCompose (Just dirs.worktreePath) (Just logDir)
-    seedPending repo sha (processNames pc)
+    seedPending repo sha logDir (processNames pc)
     withAsync (subscribeStates dirs.sock (postStatusFor repo sha logDir)) $ \obs -> do
       -- 'link' propagates an observer crash to this thread, so any path
       -- past 'wait' below is a clean WebSocket close (process-compose

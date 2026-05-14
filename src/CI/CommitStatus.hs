@@ -63,9 +63,10 @@ postStatusFor repo sha logDir ps =
 -- N parallel single-status POSTs. 'forConcurrently_' joins all of them
 -- before returning, so the caller can rely on every seed being in place
 -- before the pipeline kicks off.
-seedPending :: Repo -> Sha -> [RecipeName] -> IO ()
-seedPending repo sha recipes =
-  forConcurrently_ recipes $ \r -> postOne repo sha r Pending "Queued"
+seedPending :: Repo -> Sha -> FilePath -> [RecipeName] -> IO ()
+seedPending repo sha logDir recipes =
+  forConcurrently_ recipes $ \r ->
+    postOne repo sha r Pending (seedDescription (logPathFor logDir r))
 
 -- | Issue one commit-status POST with a caller-supplied description and
 -- log the outcome.
@@ -90,12 +91,25 @@ mkContext recipe = contextFrom (display recipe)
 -- ~80 chars at typical recipe-name lengths, leaving room for the state
 -- prose without truncation.
 describe :: CommitStatus -> FilePath -> Text
-describe cs logPath = stateLabel cs <> ": " <> T.pack logPath
+describe cs = withLogPath (stateLabel cs)
   where
     stateLabel Pending = "Running"
     stateLabel Success = "Succeeded"
     stateLabel Failure = "Failed"
     stateLabel Error = "Errored"
+
+-- | Description for a 'seedPending' post, formatted the same way as
+-- 'describe' so the seed and transition lifecycles share one path-bearing
+-- shape. If the description format ever changes (e.g. path moves to a
+-- @target_url@ field), 'withLogPath' is the single edit site.
+seedDescription :: FilePath -> Text
+seedDescription = withLogPath "Queued"
+
+-- | Internal: @\<label\>: \<logPath\>@. Owns the description shape so
+-- every status post under the same SHA + context carries the same
+-- format across its lifecycle.
+withLogPath :: Text -> FilePath -> Text
+withLogPath label logPath = label <> ": " <> T.pack logPath
 
 -- | Compose @\<logDir\>\/\<recipe\>.log@. The single home for the
 -- per-recipe log filename convention; the matching path on the YAML
