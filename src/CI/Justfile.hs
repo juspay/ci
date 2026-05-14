@@ -206,7 +206,7 @@ fetchDump = do
   result <- runSubprocess "just --dump --dump-format json" justBin ["--dump", "--dump-format", "json"] ""
   pure $ case result of
     Left e -> Left (FetchProcessError e)
-    Right stdout -> first FetchParseError (parseDump (TE.encodeUtf8 (T.pack stdout)))
+    Right stdout -> first FetchParseError $ parseDump $ TE.encodeUtf8 $ T.pack stdout
 
 -- | Decode a @just --dump --dump-format json@ payload into the flat,
 -- qualified recipe map. The 'just' top-level + submodule tree is
