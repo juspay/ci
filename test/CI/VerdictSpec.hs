@@ -11,7 +11,7 @@ module CI.VerdictSpec (spec) where
 import CI.CommitStatus (terminalToCommitStatus)
 import CI.Gh (CommitStatus (Success))
 import CI.Justfile (RecipeName)
-import CI.Node (NodeId (..))
+import CI.Node (NodeId (..), setupRecipe)
 import CI.Platform (Platform (..))
 import CI.ProcessCompose.Events (TerminalStatus)
 import CI.Verdict (RecipeOutcome (..), terminalToOutcome, verdictCode, verdictSummary)
@@ -63,6 +63,29 @@ spec = do
                 joined = T.unlines $ verdictSummary $ Map.fromList nodes
             ("alpha@x86_64-linux" `T.isInfixOf` joined) `shouldBe` True
             ("alpha@aarch64-darwin" `T.isInfixOf` joined) `shouldBe` True
+
+        -- Synthetic setup nodes (per-platform bundle ship / drv copy) are
+        -- internal plumbing and must not appear in the user-facing
+        -- summary — matching 'CI.CommitStatus.seedPending' /
+        -- 'postStatusFor', which already skip them from GH posts.
+        it "omits setup nodes from the per-node lines" $ do
+            let nodes =
+                    [ (NodeId setupRecipe X86_64Linux, Succeeded)
+                    , (NodeId "build" X86_64Linux, Succeeded)
+                    ]
+                joined = T.unlines $ verdictSummary $ Map.fromList nodes
+            (display setupRecipe `T.isInfixOf` joined) `shouldBe` False
+            ("build@x86_64-linux" `T.isInfixOf` joined) `shouldBe` True
+
+        it "omits setup nodes from the n-of-m count" $ do
+            let nodes =
+                    [ (NodeId setupRecipe X86_64Linux, Succeeded)
+                    , (NodeId "build" X86_64Linux, Succeeded)
+                    , (NodeId "test" X86_64Linux, Succeeded)
+                    ]
+                joined = T.unlines $ verdictSummary $ Map.fromList nodes
+            -- Two user recipes, not three (setup omitted).
+            ("all 2 nodes succeeded" `T.isInfixOf` joined) `shouldBe` True
 
     -- Cross-module invariant: the two consumers of 'TerminalStatus'
     -- ('terminalToOutcome' in CI.Verdict, 'terminalToCommitStatus' in

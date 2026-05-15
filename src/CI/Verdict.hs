@@ -30,7 +30,7 @@ module CI.Verdict (
 )
 where
 
-import CI.Node (NodeId)
+import CI.Node (NodeId, isSetupNode)
 import CI.ProcessCompose.Events (ProcessState (..), TerminalStatus (..), psToTerminalStatus)
 import Data.Foldable (for_)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
@@ -148,6 +148,22 @@ verdictCode outcomes
 column-aligned line per node (@\<recipe\>\@\<platform\>@), a
 divider, and a one-line verdict count. Pure; companion to
 'verdictCode' over the same snapshot.
+
+Synthetic setup nodes ('CI.Node.isSetupNode') are filtered out
+of the per-node lines and the @n of m@ count: they're internal
+plumbing (per-platform bundle ship, drv copy), not user
+recipes. This matches 'CI.CommitStatus.seedPending' /
+'CI.CommitStatus.postStatusFor', which already skip setup
+nodes from GitHub commit-status posts — so a single policy
+("user-facing reporting omits setup nodes") covers both
+audiences (PR reviewer on GitHub, local CLI user reading the
+summary) instead of agreeing by coincidence.
+
+'verdictCode' still considers every entry, including setup
+nodes: a setup failure must flip the exit code. In practice a
+failed setup also marks every dependent recipe 'Skipped', which
+already flips the exit code; the summary's @n of m@ count
+reflects the user-recipe view independently of that.
 -}
 verdictSummary :: Map NodeId RecipeOutcome -> [Text]
 verdictSummary outcomes =
@@ -155,7 +171,8 @@ verdictSummary outcomes =
         <> map nodeLine entries
         <> ["───────────────────────────────────────────────", verdictLine]
   where
-    entries = [(display n, o) | (n, o) <- Map.toAscList outcomes]
+    userNodes = Map.filterWithKey (\n _ -> not (isSetupNode n)) outcomes
+    entries = [(display n, o) | (n, o) <- Map.toAscList userNodes]
     failedCount = length (filter ((/= Succeeded) . snd) entries)
     width = maximum (0 : map (T.length . fst) entries)
     pad n = n <> T.replicate (width - T.length n) " "
