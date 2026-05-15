@@ -80,12 +80,14 @@ summary strict mode produces. Process-compose's log goes to
 UDS at @.ci\/pc.sock@ is bound so the API surface is available for
 future consumers (e.g. an MCP server).
 
-SSH lanes are supported in local mode too: any non-local platform in
-the pipeline triggers host resolution (prompt-on-miss, persist to
-@~\/.config\/ci\/hosts.json@) and an SSH-shaped @command@ that
-bundles @HEAD@ across rather than the dirty live tree. The dev's
-uncommitted work is intentionally invisible to remote lanes — the
-bundle reflects committed history only.
+SSH lanes are supported in local mode too: any non-local platform
+in the pipeline requires a @~\/.config\/ci\/hosts.json@ entry (the
+user opts in by editing the file; missing entries are excluded
+from the fanout by 'pipelinePlatformsFor'). Each remote lane gets
+an SSH-shaped @command@ that bundles @HEAD@ across rather than
+the dirty live tree — the dev's uncommitted work is intentionally
+invisible to remote lanes; the bundle reflects committed history
+only.
 -}
 runLocal :: RunDir -> Bool -> [String] -> IO ()
 runLocal dirs tui passthrough = do
@@ -225,10 +227,10 @@ transport selection all happen here so the YAML emitter
    (@[linux] [macos] [metadata(\"ci\")] root:@). A root with no
    OS attrs defaults to the local platform only.
 
- * Per-platform host resolution loads @~\/.config\/ci\/hosts.json@
-   once. In 'LocalRun' a missing host is prompted for and
-   persisted; in 'StrictRun' a missing host dies before the
-   pipeline starts (no TTY mid-run).
+ * Host resolution loads @~\/.config\/ci\/hosts.json@ once.
+   'pipelinePlatformsFor' silently excludes platforms with no
+   entry from the fanout, so a missing host is never a runtime
+   failure — the user opts in by editing the file.
 
  * Each fanned-out 'NodeId' gets a 'Local' or @Ssh host@ transport
    depending on whether its platform matches the runner's; the
@@ -310,7 +312,8 @@ data RemoteLaneState = NoRemoteLanes | RemoteLanes Sha
 
   * Hosts-entry present → SSH through that runner (overrides local
     inline execution even when @node.platform == localPlat@). The
-    smart constructor 'sshTransport' classifies arch internally.
+    'Ssh' transport carries the target 'Platform' directly; per-arch
+    behaviour lives in 'CI.Transport.commandFor' and 'CI.Nix'.
 
   * No hosts entry, but platform matches local → inline @Local@.
 
