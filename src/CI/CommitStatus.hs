@@ -1,14 +1,13 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | Translate process-compose state events into GitHub commit-status posts.
-This module owns CI's policy: the context-name convention
-(@\<recipe\>\@\<platform\>@, derived from 'NodeId'), the
-'ProcessStatus' → 'CommitStatus' mapping, and the human-readable
-description per state. The endpoint URL, the wire encoding of each
-state, and the form-field names are gh-API details owned by
-"CI.Gh".
--}
+-- | Translate process-compose state events into GitHub commit-status posts.
+-- This module owns CI's policy: the context-name convention
+-- (@\<recipe\>\@\<platform\>@, derived from 'NodeId'), the
+-- 'ProcessStatus' → 'CommitStatus' mapping, and the human-readable
+-- description per state. The endpoint URL, the wire encoding of each
+-- state, and the form-field names are gh-API details owned by
+-- "CI.Gh".
 module CI.CommitStatus (postStatusFor, seedPending, terminalToCommitStatus) where
 
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
@@ -24,98 +23,93 @@ import qualified Data.Text as T
 import Data.Text.Display (display)
 import System.IO (hPutStrLn, stderr)
 
-{- | Given a process-compose state event for an already-parsed
-'NodeId', post the corresponding GitHub commit status under the
-@\<recipe\>\@\<platform\>@ context. Non-terminal states ('PsOther')
-drop on the floor.
-
-The caller ('CI.Pipeline') has the single 'parseNodeId' site, so
-"is this event for a node we scheduled?" is decided once, not
-re-decided here and again in 'CI.Verdict.recordOutcome'.
-
-The status @description@ embeds the path to the node's per-run log
-(@\<logDir\>\/\<platform\>\/\<recipe\>.log@) so a red check in the
-GitHub UI carries a navigable pointer to the failing output. The
-same path is set as the process's @log_location@ in the
-process-compose YAML, so the file on disk and the path in the
-status agree by construction.
-
-Synchronous: each post blocks the subscription loop in
-'CI.ProcessCompose.Events.subscribeStates' until @gh api@ returns. This
-is deliberate — forking the post without tracking the resulting
-threads loses terminal status posts at process exit (the forked @gh@
-calls get killed before completing). At our scale (~10 events per run,
-~hundreds of ms per post) the brief pause is acceptable; if @gh@
-hangs ever becomes a real problem, the right fix is a timeout on the
-post, not a fire-and-forget fork.
-
-Posting failures are logged to stderr with a @gh:@ prefix and
-swallowed — the node's exit code must not depend on whether a
-status post succeeded.
--}
+-- | Given a process-compose state event for an already-parsed
+-- 'NodeId', post the corresponding GitHub commit status under the
+-- @\<recipe\>\@\<platform\>@ context. Non-terminal states ('PsOther')
+-- drop on the floor.
+--
+-- The caller ('CI.Pipeline') has the single 'parseNodeId' site, so
+-- "is this event for a node we scheduled?" is decided once, not
+-- re-decided here and again in 'CI.Verdict.recordOutcome'.
+--
+-- The status @description@ embeds the path to the node's per-run log
+-- (@\<logDir\>\/\<platform\>\/\<recipe\>.log@) so a red check in the
+-- GitHub UI carries a navigable pointer to the failing output. The
+-- same path is set as the process's @log_location@ in the
+-- process-compose YAML, so the file on disk and the path in the
+-- status agree by construction.
+--
+-- Synchronous: each post blocks the subscription loop in
+-- 'CI.ProcessCompose.Events.subscribeStates' until @gh api@ returns. This
+-- is deliberate — forking the post without tracking the resulting
+-- threads loses terminal status posts at process exit (the forked @gh@
+-- calls get killed before completing). At our scale (~10 events per run,
+-- ~hundreds of ms per post) the brief pause is acceptable; if @gh@
+-- hangs ever becomes a real problem, the right fix is a timeout on the
+-- post, not a fire-and-forget fork.
+--
+-- Posting failures are logged to stderr with a @gh:@ prefix and
+-- swallowed — the node's exit code must not depend on whether a
+-- status post succeeded.
 postStatusFor :: Repo -> Sha -> FilePath -> NodeId -> ProcessState -> IO ()
 postStatusFor repo sha logDir node ps
-    -- Setup nodes are internal plumbing (bundle ship, drv copy);
-    -- the PR doesn't care whether @_ci-setup\@<platform>@ passed
-    -- or failed, only whether the *user's* recipes did. Skip the
-    -- GH post for these; the verdict summary still shows them.
-    | isSetupNode node = pure ()
-    | otherwise =
-        for_ (psToCommitStatus ps) $ \cs ->
-            postOne repo sha node cs $ describe cs $ logPathFor logDir node
+  -- Setup nodes are internal plumbing (bundle ship, drv copy);
+  -- the PR doesn't care whether @_ci-setup\@<platform>@ passed
+  -- or failed, only whether the *user's* recipes did. Skip the
+  -- GH post for these; the verdict summary still shows them.
+  | isSetupNode node = pure ()
+  | otherwise =
+      for_ (psToCommitStatus ps) $ \cs ->
+        postOne repo sha node cs $ describe cs $ logPathFor logDir node
 
-{- | Pre-seed every node with a 'Pending' commit status at startup —
-one parallel @gh api@ POST per node, all joined before this returns.
-The PR's checks panel shows the full set of expected checks the moment
-the pipeline begins, instead of materializing them one at a time as
-nodes start. Skipped nodes (whose dep failed) get their @pending@
-overwritten by @error@ when 'postStatusFor' fires; nodes that never
-run at all stay at @pending@, which surfaces as a visible "why is
-this still pending?" signal rather than silent absence.
-
-GitHub has no batch endpoint for commit statuses
-(see <https://docs.github.com/en/rest/commits/statuses>), so this is
-N parallel single-status POSTs. 'forConcurrently_' joins all of them
-before returning, so the caller can rely on every seed being in place
-before the pipeline kicks off.
--}
+-- | Pre-seed every node with a 'Pending' commit status at startup —
+-- one parallel @gh api@ POST per node, all joined before this returns.
+-- The PR's checks panel shows the full set of expected checks the moment
+-- the pipeline begins, instead of materializing them one at a time as
+-- nodes start. Skipped nodes (whose dep failed) get their @pending@
+-- overwritten by @error@ when 'postStatusFor' fires; nodes that never
+-- run at all stay at @pending@, which surfaces as a visible "why is
+-- this still pending?" signal rather than silent absence.
+--
+-- GitHub has no batch endpoint for commit statuses
+-- (see <https://docs.github.com/en/rest/commits/statuses>), so this is
+-- N parallel single-status POSTs. 'forConcurrently_' joins all of them
+-- before returning, so the caller can rely on every seed being in place
+-- before the pipeline kicks off.
 seedPending :: Repo -> Sha -> FilePath -> [NodeId] -> IO ()
 seedPending repo sha logDir nodes =
-    -- Same filter as 'postStatusFor': setup nodes are internal,
-    -- not user-visible recipes. Seeding them as @pending@ would
-    -- leave stray internal-named checks on the PR.
-    forConcurrently_ (filter (not . isSetupNode) nodes) $ \n ->
-        postOne repo sha n Pending $ seedDescription $ logPathFor logDir n
+  -- Same filter as 'postStatusFor': setup nodes are internal,
+  -- not user-visible recipes. Seeding them as @pending@ would
+  -- leave stray internal-named checks on the PR.
+  forConcurrently_ (filter (not . isSetupNode) nodes) $ \n ->
+    postOne repo sha n Pending $ seedDescription $ logPathFor logDir n
 
-{- | Issue one commit-status POST with a caller-supplied description and
-log the outcome.
--}
+-- | Issue one commit-status POST with a caller-supplied description and
+-- log the outcome.
 postOne :: Repo -> Sha -> NodeId -> CommitStatus -> Text -> IO ()
 postOne repo sha node cs desc = do
-    let ctx = contextForNode node
-        post = CommitStatusPost{state = cs, context = ctx, description = desc}
-    result <- postCommitStatus repo sha post
-    let line = "gh: " <> T.unpack (display ctx) <> " " <> T.unpack (display cs)
-    case result of
-        Right () -> hPutStrLn stderr line
-        Left e -> hPutStrLn stderr $ line <> " FAILED: " <> T.unpack (display e)
+  let ctx = contextForNode node
+      post = CommitStatusPost {state = cs, context = ctx, description = desc}
+  result <- postCommitStatus repo sha post
+  let line = "gh: " <> T.unpack (display ctx) <> " " <> T.unpack (display cs)
+  case result of
+    Right () -> hPutStrLn stderr line
+    Left e -> hPutStrLn stderr $ line <> " FAILED: " <> T.unpack (display e)
 
-{- | The single source of truth for status-check context names: a
-'NodeId' rendered as @\<recipe\>\@\<platform\>@. Named (rather
-than a @Display a =>@ helper) so the YAML map key and the GH
-context can evolve independently — both currently render the
-same 'NodeId' identically, but the agreement is by intent, not
-typeclass coincidence.
--}
+-- | The single source of truth for status-check context names: a
+-- 'NodeId' rendered as @\<recipe\>\@\<platform\>@. Named (rather
+-- than a @Display a =>@ helper) so the YAML map key and the GH
+-- context can evolve independently — both currently render the
+-- same 'NodeId' identically, but the agreement is by intent, not
+-- typeclass coincidence.
 contextForNode :: NodeId -> Context
 contextForNode = contextFrom . display
 
-{- | CI's human-readable label per state, suffixed with the recipe's log
-path so the GitHub UI's 140-char description carries a one-click
-pointer to the matching file under @.ci\/\<sha\>\/@. Path stays under
-~80 chars at typical recipe-name lengths, leaving room for the state
-prose without truncation.
--}
+-- | CI's human-readable label per state, suffixed with the recipe's log
+-- path so the GitHub UI's 140-char description carries a one-click
+-- pointer to the matching file under @.ci\/\<sha\>\/@. Path stays under
+-- ~80 chars at typical recipe-name lengths, leaving room for the state
+-- prose without truncation.
 describe :: CommitStatus -> FilePath -> Text
 describe cs = withLogPath $ stateLabel cs
   where
@@ -124,41 +118,37 @@ describe cs = withLogPath $ stateLabel cs
     stateLabel Failure = "Failed"
     stateLabel Error = "Errored"
 
-{- | Description for a 'seedPending' post, formatted the same way as
-'describe' so the seed and transition lifecycles share one path-bearing
-shape. If the description format ever changes (e.g. path moves to a
-@target_url@ field), 'withLogPath' is the single edit site.
--}
+-- | Description for a 'seedPending' post, formatted the same way as
+-- 'describe' so the seed and transition lifecycles share one path-bearing
+-- shape. If the description format ever changes (e.g. path moves to a
+-- @target_url@ field), 'withLogPath' is the single edit site.
 seedDescription :: FilePath -> Text
 seedDescription = withLogPath "Queued"
 
-{- | Internal: @\<label\>: \<logPath\>@. Owns the description shape so
-every status post under the same SHA + context carries the same
-format across its lifecycle.
--}
+-- | Internal: @\<label\>: \<logPath\>@. Owns the description shape so
+-- every status post under the same SHA + context carries the same
+-- format across its lifecycle.
 withLogPath :: Text -> FilePath -> Text
 withLogPath label logPath = label <> ": " <> T.pack logPath
 
-{- | Translate one process-compose 'ProcessState' event into the
-'CommitStatus' it surfaces under. Non-terminal states ('PsOther')
-return 'Nothing' so consumers can drop them. The terminal cases
-delegate to 'psToTerminalStatus' (the project-wide ground-truth
-predicate) and add the GitHub-specific @PsRunning -> Pending@
-transition on top — the verdict accumulator in "CI.Verdict" reuses
-the same base classifier directly, so the GH check page and the
-local exit code stay in agreement without "CI.Verdict" having to
-depend on this module.
--}
+-- | Translate one process-compose 'ProcessState' event into the
+-- 'CommitStatus' it surfaces under. Non-terminal states ('PsOther')
+-- return 'Nothing' so consumers can drop them. The terminal cases
+-- delegate to 'psToTerminalStatus' (the project-wide ground-truth
+-- predicate) and add the GitHub-specific @PsRunning -> Pending@
+-- transition on top — the verdict accumulator in "CI.Verdict" reuses
+-- the same base classifier directly, so the GH check page and the
+-- local exit code stay in agreement without "CI.Verdict" having to
+-- depend on this module.
 psToCommitStatus :: ProcessState -> Maybe CommitStatus
 psToCommitStatus ps = case ps.status of
-    PsRunning -> Just Pending
-    _ -> terminalToCommitStatus <$> psToTerminalStatus ps
+  PsRunning -> Just Pending
+  _ -> terminalToCommitStatus <$> psToTerminalStatus ps
 
-{- | GitHub-side mapping for the three terminal classifications. Owns
-the policy that both 'PsSkipped' and 'PsErrored' surface as
-'Error' on the wire (see 'TerminalStatus' for why those two pc
-states collapse together).
--}
+-- | GitHub-side mapping for the three terminal classifications. Owns
+-- the policy that both 'PsSkipped' and 'PsErrored' surface as
+-- 'Error' on the wire (see 'TerminalStatus' for why those two pc
+-- states collapse together).
 terminalToCommitStatus :: TerminalStatus -> CommitStatus
 terminalToCommitStatus TsSucceeded = Success
 terminalToCommitStatus TsFailed = Failure
