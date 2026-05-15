@@ -30,7 +30,8 @@ module CI.Verdict (
 )
 where
 
-import CI.Node (NodeId, isSetupNode)
+import CI.Node (NodeId)
+import CI.NodeKind (isSetupNode)
 import CI.ProcessCompose.Events (ProcessState (..), TerminalStatus (..), psToTerminalStatus)
 import Data.Foldable (for_)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
@@ -149,7 +150,7 @@ column-aligned line per node (@\<recipe\>\@\<platform\>@), a
 divider, and a one-line verdict count. Pure; companion to
 'verdictCode' over the same snapshot.
 
-Synthetic setup nodes ('CI.Node.isSetupNode') are filtered out
+Synthetic setup nodes ('CI.NodeKind.isSetupNode') are filtered out
 of the per-node lines and the @n of m@ count: they're internal
 plumbing (per-platform bundle ship, drv copy), not user
 recipes. This matches 'CI.CommitStatus.seedPending' /

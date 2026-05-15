@@ -10,7 +10,8 @@ module CI.TransportSpec (spec) where
 
 import CI.Git (shaPlaceholder)
 import CI.Hosts (hostFromText)
-import CI.Node (NodeId (..), setupRecipe)
+import CI.Node (NodeId (..))
+import CI.NodeKind (setupRecipe)
 import CI.Platform (Platform (..))
 import CI.Transport (Transport (..), cachedRunDir, commandFor, remoteRunner)
 import qualified Data.Text as T
