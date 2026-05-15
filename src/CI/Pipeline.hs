@@ -203,6 +203,19 @@ data RunMode
       -}
       DumpRun
 
+{- | The two YAML-shape projections of 'RunMode': the working
+directory every local recipe @chdir@s into, and the per-node log
+location the YAML emitter routes stdout/stderr to. Both vary
+together across modes — 'StrictRun' supplies both; 'LocalRun' and
+'DumpRun' supply neither — so they live in a single
+'RunMode'-pattern-match rather than two parallel where-clauses that
+have to stay in lockstep across future 'RunMode' constructors.
+-}
+yamlPathsFor :: RunMode -> (Maybe FilePath, NodeId -> Maybe FilePath)
+yamlPathsFor LocalRun = (Nothing, const Nothing)
+yamlPathsFor DumpRun = (Nothing, const Nothing)
+yamlPathsFor (StrictRun wt ld) = (Just wt, Just . logPathFor ld)
+
 {- | Walk @just --dump@ → root → reachable subgraph → topologically
 lowered DAG → fan out across the pipeline's platform set →
 'ProcessCompose' YAML. Platform discovery, host resolution, and
@@ -255,14 +268,8 @@ buildProcessCompose mode = do
             | hasRemote -> RemoteLanes <$> (dieOnLeft =<< resolveSha)
             | otherwise -> pure NoRemoteLanes
     let mkCommand = commandForNode remoteLaneState localPlat hosts
-    pure $ toProcessCompose (workingDir mode) mkCommand (logLocation mode) nodeGraph
-  where
-    workingDir LocalRun = Nothing
-    workingDir DumpRun = Nothing
-    workingDir (StrictRun wt _) = Just wt
-    logLocation LocalRun = const Nothing
-    logLocation DumpRun = const Nothing
-    logLocation (StrictRun _ ld) = Just . logPathFor ld
+        (yamlWorkingDir, yamlLogLocation) = yamlPathsFor mode
+    pure $ toProcessCompose yamlWorkingDir mkCommand yamlLogLocation nodeGraph
 
 {- | The pipeline's platform set, derived from the root recipe's
 @[linux] [macos] ...@ attributes. A root with no OS attrs falls
