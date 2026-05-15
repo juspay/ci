@@ -17,8 +17,11 @@ Two orthogonal axes meet here:
 
 'commandFor' takes both. The caller ('CI.Pipeline.commandForNode')
 already knows which kind it's emitting (it built the setup nodes
-into the graph) and passes the shape explicitly; 'Transport' no
-longer has to re-derive the node kind from a 'NodeId'.
+into the graph) and passes the shape explicitly, classifying the
+'NodeId' via 'CI.NodeKind.isSetupNode'; 'Transport' no longer has
+to re-derive the node kind from a 'NodeId'. The cross-module
+invariant — that exactly one site discriminates setup vs recipe —
+lives at that 'commandForNode' call site, not in 'Transport'.
 
 Remote setup nodes ship the @just@ derivation, bundle @HEAD@
 across, and clone into
