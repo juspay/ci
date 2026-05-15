@@ -2,22 +2,24 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-{- | The CI fanout platform vocabulary. A 'Platform' identifies one lane
-the pipeline can be expanded across — a host OS the pipeline is willing
-to send recipes to (locally or via SSH). Distinct from 'CI.Justfile.Os'
-(which is just's full host-OS-gate vocabulary, including Unix, BSDs,
-Windows): 'Platform' is the strictly smaller set we route to.
+{- | The fanout platform vocabulary — Nix system tuples
+(@x86_64-linux@, @aarch64-darwin@, …). Closed sum: each constructor
+maps to one env-var-injected @just@ @.drv@ path that the runner
+ships to remotes via @nix-store --export | --import@ and realises
+on-site.
 
-The renderings here ('display', 'parsePlatform') are the *single*
-source of truth — they're consumed by every downstream string-shaped
-caller (the YAML process-map key via 'CI.Node.NodeId', the
-@\<platform\>@ segment of log paths, the host-config JSON keys).
+Distinct from 'CI.Justfile.Os' — that's just's host-OS-gate
+vocabulary (Linux/Macos/BSD/Windows); 'Platform' is the strictly
+smaller, Nix-aware set we route to. 'osToPlatforms' bridges between
+them: a recipe-level @[linux]@ gate matches both @x86_64-linux@ and
+@aarch64-linux@.
 -}
 module CI.Platform (
     Platform (..),
     allPlatforms,
     parsePlatform,
-    osToPlatform,
+    platformOs,
+    osToPlatforms,
     LocalPlatformError,
     localPlatform,
 )
@@ -29,75 +31,89 @@ import qualified Data.Text as T
 import Data.Text.Display (Display (..))
 import qualified System.Info
 
-{- | The fanout platform set. Closed sum on purpose: every consumer that
-pattern-matches on 'Platform' becomes a pattern-match exhaustiveness
-warning when a new constructor lands, instead of a silent omission.
+{- | The fanout platform set. Closed sum so adding a new system
+requires both a constructor and a matching env-var in @flake.nix@.
+The four common Nix systems are supported today; @riscv64-linux@,
+@armv7l-linux@, etc. can be added by extending this type and
+mirroring the @CI_JUST_DRV_*@ entry in the flake.
 -}
-data Platform = Linux | Macos
+data Platform
+    = X86_64Linux
+    | Aarch64Linux
+    | X86_64Darwin
+    | Aarch64Darwin
     deriving stock (Show, Eq, Ord, Bounded, Enum)
 
-{- | Lowercase, no qualifier. Matches @CI_SYSTEM@-style conventions and
-the JSON keys in @~\/.config\/ci\/hosts.json@.
+{- | Standard Nix system tuple — what @builtins.currentSystem@
+returns and what @flake.nix@'s @legacyPackages@ keys by.
 -}
 instance Display Platform where
-    displayBuilder Linux = "linux"
-    displayBuilder Macos = "macos"
+    displayBuilder X86_64Linux = "x86_64-linux"
+    displayBuilder Aarch64Linux = "aarch64-linux"
+    displayBuilder X86_64Darwin = "x86_64-darwin"
+    displayBuilder Aarch64Darwin = "aarch64-darwin"
 
-{- | Every 'Platform'. Used by the hosts-config loader to enumerate
-valid keys without listing constructors by hand.
--}
+-- | Every 'Platform'.
 allPlatforms :: [Platform]
 allPlatforms = [minBound .. maxBound]
 
-{- | Inverse of 'display' on the closed set. 'Nothing' on anything
+{- | Inverse of 'display' over the closed set. 'Nothing' on anything
 else — callers (host-config loader, 'CI.Node.parseNodeId') tolerate
-the failure rather than dying, so an unknown key in hosts.json or
-a future process-compose event with a different platform tag drops
-on the floor instead of tearing the run down.
+the failure rather than dying.
 -}
 parsePlatform :: Text -> Maybe Platform
 parsePlatform t = case T.toLower t of
-    "linux" -> Just Linux
-    "macos" -> Just Macos
+    "x86_64-linux" -> Just X86_64Linux
+    "aarch64-linux" -> Just Aarch64Linux
+    "x86_64-darwin" -> Just X86_64Darwin
+    "aarch64-darwin" -> Just Aarch64Darwin
     _ -> Nothing
 
-{- | Bridge from just's full host-OS-gate vocabulary
-('CI.Justfile.Os') to the strictly smaller fanout vocabulary
-here. 'Nothing' for gates that don't identify a CI lane target
-(Unix, Windows, the BSDs) — those stay host-OS gates only, never
-fanout targets. This is the *only* coupling between the two
-vocabularies; downstream consumers route through 'Platform'.
+{- | The host-OS family this platform belongs to. Used to match a
+fanout candidate against recipe-level @[linux]/[macos]@ attributes
+emitted by @just@.
 -}
-osToPlatform :: J.Os -> Maybe Platform
-osToPlatform J.Linux = Just Linux
-osToPlatform J.Macos = Just Macos
-osToPlatform _ = Nothing
+platformOs :: Platform -> J.Os
+platformOs X86_64Linux = J.Linux
+platformOs Aarch64Linux = J.Linux
+platformOs X86_64Darwin = J.Macos
+platformOs Aarch64Darwin = J.Macos
 
-{- | The host wasn't a 'Platform' we know how to route to. Today only
-@linux@ and @darwin@ (per 'System.Info.os') resolve; the orchestrator
-refuses to guess.
+{- | Bridge from just's host-OS-gate vocabulary to the set of Nix
+systems that satisfy it. @[linux]@ matches both linux variants;
+@[macos]@ matches both darwin variants. Other 'J.Os' gates
+('J.Unix', 'J.Windows', the BSDs) don't identify a CI lane target
+and return @[]@ — those stay host-OS gates only.
 -}
-newtype LocalPlatformError = LocalPlatformError {hostOs :: String}
+osToPlatforms :: J.Os -> [Platform]
+osToPlatforms J.Linux = [X86_64Linux, Aarch64Linux]
+osToPlatforms J.Macos = [X86_64Darwin, Aarch64Darwin]
+osToPlatforms _ = []
+
+{- | The host wasn't a 'Platform' we know how to route to. Today
+the supported set is the four common Nix systems
+(@x86_64-linux@, @aarch64-linux@, @x86_64-darwin@,
+@aarch64-darwin@); anything else fails fast rather than silently
+defaulting to a wrong lane.
+-}
+newtype LocalPlatformError = LocalPlatformError {tuple :: String}
     deriving stock (Show)
 
 instance Display LocalPlatformError where
     displayBuilder e =
-        "unsupported host OS for CI: "
-            <> displayBuilder (T.pack e.hostOs)
-            <> " (only linux and macos are supported)"
+        "unsupported local Nix system: "
+            <> displayBuilder (T.pack e.tuple)
+            <> " (supported: x86_64-linux, aarch64-linux, x86_64-darwin, aarch64-darwin)"
 
 {- | Classify the running host into a 'Platform'. Reads
-'System.Info.os' (compiled into the binary by GHC, no shell-out);
-maps @"linux"@ to 'Linux' and @"darwin"@ to 'Macos'.
-
-Pure: 'System.Info.os' is a compile-time constant baked in by GHC,
-so this is a 'Either', not an 'IO Either'. The earlier 'IO' wrapper
-was cosmetic ("symmetry with other resolvers") and forced every
-caller into '<<=' threading for no runtime gain; readers of the
-type now see the truth (no effects, two invocations always agree).
+'System.Info.os' + 'System.Info.arch' — both compile-time
+constants baked in by GHC, so this is pure. Two invocations on
+the same binary always agree.
 -}
 localPlatform :: Either LocalPlatformError Platform
-localPlatform = case System.Info.os of
-    "linux" -> Right Linux
-    "darwin" -> Right Macos
-    other -> Left (LocalPlatformError other)
+localPlatform = case (System.Info.os, System.Info.arch) of
+    ("linux", "x86_64") -> Right X86_64Linux
+    ("linux", "aarch64") -> Right Aarch64Linux
+    ("darwin", "x86_64") -> Right X86_64Darwin
+    ("darwin", "aarch64") -> Right Aarch64Darwin
+    (o, a) -> Left $ LocalPlatformError $ o <> "/" <> a

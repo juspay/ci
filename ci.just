@@ -39,8 +39,8 @@ flake-check:
 run-check: build
     echo "Running on Linux $(uname -srm)"
     nix run . -- dump-yaml | tee /tmp/ci-out
-    grep -qE '^  ci::default@linux:' /tmp/ci-out
-    grep -qE '^  ci::default@macos:' /tmp/ci-out
+    grep -qE '^  ci::default@x86_64-linux:' /tmp/ci-out
+    grep -qE '^  ci::default@aarch64-darwin:' /tmp/ci-out
     grep -qE -- '--no-deps' /tmp/ci-out
     grep -qE "^      restart: 'no'$" /tmp/ci-out
     grep -qE '^      exit_on_skipped: false$' /tmp/ci-out
@@ -49,8 +49,8 @@ run-check: build
 run-check: build
     echo "Running on macOS $(sw_vers -productVersion)"
     nix run . -- dump-yaml | tee "${TMPDIR%/}/ci-out"
-    grep -qE '^  ci::default@linux:' "${TMPDIR%/}/ci-out"
-    grep -qE '^  ci::default@macos:' "${TMPDIR%/}/ci-out"
+    grep -qE '^  ci::default@x86_64-linux:' "${TMPDIR%/}/ci-out"
+    grep -qE '^  ci::default@aarch64-darwin:' "${TMPDIR%/}/ci-out"
     grep -qE -- '--no-deps' "${TMPDIR%/}/ci-out"
     grep -qE "^      restart: 'no'$" "${TMPDIR%/}/ci-out"
     grep -qE '^      exit_on_skipped: false$' "${TMPDIR%/}/ci-out"

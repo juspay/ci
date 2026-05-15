@@ -43,8 +43,8 @@ spec = do
         let host = hostFromText "remote.example.com"
             sha = shaPlaceholder
             recipe = "ci::build"
-            native = commandFor (sshTransport host sha Linux Linux) recipe
-            foreign_ = commandFor (sshTransport host sha Linux Macos) recipe
+            native = commandFor (sshTransport host sha X86_64Linux X86_64Linux) recipe
+            foreign_ = commandFor (sshTransport host sha X86_64Linux Aarch64Darwin) recipe
 
         it "same-platform target prepends a `nix-store --export | runner nix-store --import` step" $
             ("nix-store --export" `T.isInfixOf` native) `shouldBe` True

@@ -28,33 +28,33 @@ spec = describe "toProcessCompose" $ do
 
     it "keys processes by <recipe>@<platform>" $ do
         let yaml = encodeYaml (const Nothing)
-        yaml `shouldContain` "r@linux"
+        yaml `shouldContain` "r@x86_64-linux"
 
     it "emits one process per (recipe, platform) when a recipe is fanned out" $ do
         let g =
                 G.vertices
-                    [NodeId "build" Linux, NodeId "build" Macos]
+                    [NodeId "build" X86_64Linux, NodeId "build" Aarch64Darwin]
             yaml = encodeMulti (const Nothing) g
-        yaml `shouldContain` "build@linux"
-        yaml `shouldContain` "build@macos"
+        yaml `shouldContain` "build@x86_64-linux"
+        yaml `shouldContain` "build@aarch64-darwin"
 
     it "wires depends_on within a platform lane, never across" $ do
         -- Two lanes, each with build←root: root depends on build. The
-        -- linux lane's root must depend_on build@linux, not build@macos
+        -- linux lane's root must depend_on build@x86_64-linux, not build@aarch64-darwin
         -- (and vice versa). Cross-platform edges are a fanout bug.
         let g =
                 G.edges
-                    [ (NodeId "root" Linux, NodeId "build" Linux)
-                    , (NodeId "root" Macos, NodeId "build" Macos)
+                    [ (NodeId "root" X86_64Linux, NodeId "build" X86_64Linux)
+                    , (NodeId "root" Aarch64Darwin, NodeId "build" Aarch64Darwin)
                     ]
             yaml = encodeMulti (const Nothing) g
-        -- root@linux's depends_on block contains build@linux
-        yaml `shouldContain` "root@linux"
-        yaml `shouldContain` "build@linux"
-        yaml `shouldContain` "root@macos"
-        yaml `shouldContain` "build@macos"
+        -- root@x86_64-linux's depends_on block contains build@x86_64-linux
+        yaml `shouldContain` "root@x86_64-linux"
+        yaml `shouldContain` "build@x86_64-linux"
+        yaml `shouldContain` "root@aarch64-darwin"
+        yaml `shouldContain` "build@aarch64-darwin"
         -- No cross-lane edges should be emitted
-        yaml `shouldNotContain` "build@macos:\n          condition"
+        yaml `shouldNotContain` "build@aarch64-darwin:\n          condition"
 
 {- | Encode a single-vertex 'ProcessCompose' to YAML as a String. One
 vertex is enough: the per-process @log_location@ field is set
@@ -66,7 +66,7 @@ encodeYaml mkLog =
     BS8.unpack . Y.encode $
         toProcessCompose Nothing (const "echo hi") mkLog graph
   where
-    graph = G.vertex (NodeId "r" Linux)
+    graph = G.vertex (NodeId "r" X86_64Linux)
 
 {- | Variant of 'encodeYaml' that takes a caller-supplied graph so a
 test can exercise multi-platform fanout shapes.

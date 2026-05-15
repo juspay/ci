@@ -24,25 +24,21 @@ module CI.Hosts (
     hostsPath,
     loadHosts,
     lookupHost,
-    promptAndPersistHost,
+    hostsPlatforms,
 )
 where
 
 import CI.Platform (Platform, parsePlatform)
 import Control.Exception (IOException, try)
-import Data.Aeson (eitherDecodeStrict, encode)
+import Data.Aeson (eitherDecodeStrict)
 import qualified Data.ByteString as BS
-import qualified Data.ByteString.Lazy as BSL
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
-import qualified Data.Text as T
-import Data.Text.Display (Display (..), display)
-import qualified Data.Text.IO as TIO
-import System.Directory (createDirectoryIfMissing, getHomeDirectory)
-import System.FilePath (takeDirectory, (</>))
-import System.IO (hFlush, stderr)
+import Data.Text.Display (Display)
+import System.Directory (getHomeDirectory)
+import System.FilePath ((</>))
 import System.IO.Error (isDoesNotExistError)
 
 {- | An SSH destination — anything @ssh@ accepts as @[user@]host[:port]@.
@@ -99,65 +95,16 @@ loadHosts = do
                     pure . Hosts . Map.fromList $
                         mapMaybe (\(k, v) -> (,Host v) <$> parsePlatform k) (Map.toList raw)
 
-{- | Pure lookup; useful for offline checks (does this map have what
-we need without prompting?).
--}
+-- | Pure lookup.
 lookupHost :: Platform -> Hosts -> Maybe Host
 lookupHost p (Hosts m) = Map.lookup p m
 
-{- | Look up @p@; on miss, **prompt the user on @stderr@ for a host**,
-read a line from @stdin@, persist the result back to the config
-file, and return the new 'Host'. Reuses the prompt convention
-kolu uses (one question per platform, persist on enter).
-Name carries the interactive intent — every call site reads
-@promptAndPersistHost@ in the chain, so non-interactive callers
-(@--json@, MCP server, batch jobs) won't reach for it by accident.
-Strict mode ('CI=true') has no TTY and stays on 'lookupHost' +
-fail-fast at startup.
+{- | Every 'Platform' with a configured host entry. The pipeline
+fanout in 'CI.Pipeline' intersects this set with the root recipe's
+declared OS families to decide which Nix systems to target — so a
+platform without a hosts.json entry doesn't appear in the fanout
+at all (no prompt-on-miss, no fail-fast: the user explicitly opts
+in by writing the file).
 -}
-promptAndPersistHost :: Platform -> Hosts -> IO (Host, Hosts)
-promptAndPersistHost p hs@(Hosts m) = case Map.lookup p m of
-    Just h -> pure (h, hs)
-    Nothing -> do
-        h <- promptHost p
-        let m' = Map.insert p h m
-        persistHosts (Hosts m')
-        pure (h, Hosts m')
-
-{- | Single-line prompt on @stderr@ (stdout stays clean for pipeable
-output), read one line from stdin, strip whitespace, refuse the
-empty answer with a re-prompt loop.
--}
-promptHost :: Platform -> IO Host
-promptHost p = loop
-  where
-    loop = do
-        TIO.hPutStr stderr $ "ci: SSH host for " <> display p <> "? "
-        hFlush stderr
-        line <- T.strip <$> TIO.getLine
-        if T.null line
-            then do
-                TIO.hPutStrLn stderr "  (empty input — please enter a hostname)"
-                loop
-            else pure (Host line)
-
-{- | Write the full 'Hosts' map back to disk. Creates the parent
-directory on first write. Not atomic (truncate-then-write); a
-crash mid-write leaves the file empty. We don't bother with a
-tmpfile rename because two concurrent @ci@ invocations are already
-blocked by other means (see #10), so the only writer is this
-process, and a partial write is rare enough to be acceptable (the
-file is human-editable anyway).
--}
-persistHosts :: Hosts -> IO ()
-persistHosts (Hosts m) = do
-    path <- hostsPath
-    createDirectoryIfMissing True (takeDirectory path)
-    let raw :: Map Text Text
-        raw = Map.fromList [(display p, display h) | (p, h) <- Map.toList m]
-    result :: Either IOException () <- try $ BSL.writeFile path (encode raw)
-    case result of
-        Right () -> pure ()
-        Left e ->
-            TIO.hPutStrLn stderr $
-                "ci: warning: failed to persist " <> T.pack path <> ": " <> T.pack (show e)
+hostsPlatforms :: Hosts -> [Platform]
+hostsPlatforms (Hosts m) = Map.keys m

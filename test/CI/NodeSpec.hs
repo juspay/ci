@@ -16,17 +16,17 @@ import Test.Hspec
 spec :: Spec
 spec = do
     describe "parseNodeId" $ do
-        it "parses <recipe>@linux into NodeId" $
-            parseNodeId "build@linux" `shouldBe` Just (NodeId "build" Linux)
+        it "parses <recipe>@x86_64-linux into NodeId" $
+            parseNodeId "build@x86_64-linux" `shouldBe` Just (NodeId "build" X86_64Linux)
 
-        it "parses <recipe>@macos into NodeId" $
-            parseNodeId "build@macos" `shouldBe` Just (NodeId "build" Macos)
+        it "parses <recipe>@aarch64-darwin into NodeId" $
+            parseNodeId "build@aarch64-darwin" `shouldBe` Just (NodeId "build" Aarch64Darwin)
 
         it "preserves :: in recipe FQNs" $
-            parseNodeId "sub::build@linux" `shouldBe` Just (NodeId "sub::build" Linux)
+            parseNodeId "sub::build@x86_64-linux" `shouldBe` Just (NodeId "sub::build" X86_64Linux)
 
         it "splits on the last @ (recipes never contain @, platforms never contain ::)" $
-            parseNodeId "a::b::c@macos" `shouldBe` Just (NodeId "a::b::c" Macos)
+            parseNodeId "a::b::c@aarch64-darwin" `shouldBe` Just (NodeId "a::b::c" Aarch64Darwin)
 
         it "returns Nothing on missing platform suffix" $
             parseNodeId "build" `shouldBe` Nothing
@@ -35,21 +35,21 @@ spec = do
             parseNodeId "build@windows" `shouldBe` Nothing
 
         it "returns Nothing on empty recipe name" $
-            parseNodeId "@linux" `shouldBe` Nothing
+            parseNodeId "@x86_64-linux" `shouldBe` Nothing
 
     describe "Display NodeId" $ do
         it "emits <recipe>@<platform>" $
-            display (NodeId "build" Linux) `shouldBe` "build@linux"
+            display (NodeId "build" X86_64Linux) `shouldBe` "build@x86_64-linux"
 
         it "preserves :: in recipe FQNs" $
-            display (NodeId "sub::build" Macos) `shouldBe` "sub::build@macos"
+            display (NodeId "sub::build" Aarch64Darwin) `shouldBe` "sub::build@aarch64-darwin"
 
     describe "round-trip" $ do
         let cases =
-                [ NodeId "build" Linux
-                , NodeId "build" Macos
-                , NodeId "sub::nested::recipe" Linux
-                , NodeId "a-recipe-with-dashes" Macos
+                [ NodeId "build" X86_64Linux
+                , NodeId "build" Aarch64Darwin
+                , NodeId "sub::nested::recipe" X86_64Linux
+                , NodeId "a-recipe-with-dashes" Aarch64Darwin
                 ]
         it "parseNodeId . display is Just for every NodeId" $
             mapM_

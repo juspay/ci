@@ -22,12 +22,12 @@ import Data.Text.Display (display)
 import System.Exit (ExitCode (..))
 import Test.Hspec
 
-{- | Convenience: build a Linux-lane 'NodeId' from a bare recipe-name
+{- | Convenience: build a X86_64Linux-lane 'NodeId' from a bare recipe-name
 string literal. 'CI.Justfile.RecipeName' has 'IsString', so the
 argument under @-XOverloadedStrings@ disambiguates correctly.
 -}
 nodeLinux :: RecipeName -> NodeId
-nodeLinux r = NodeId r Linux
+nodeLinux r = NodeId r X86_64Linux
 
 spec :: Spec
 spec = do
@@ -59,10 +59,10 @@ spec = do
                 (display n `T.isInfixOf` joined) `shouldBe` True
 
         it "shows the platform suffix in each summary line" $ do
-            let nodes = [(NodeId "alpha" Linux, Succeeded), (NodeId "alpha" Macos, Failed)]
+            let nodes = [(NodeId "alpha" X86_64Linux, Succeeded), (NodeId "alpha" Aarch64Darwin, Failed)]
                 joined = T.unlines $ verdictSummary $ Map.fromList nodes
-            ("alpha@linux" `T.isInfixOf` joined) `shouldBe` True
-            ("alpha@macos" `T.isInfixOf` joined) `shouldBe` True
+            ("alpha@x86_64-linux" `T.isInfixOf` joined) `shouldBe` True
+            ("alpha@aarch64-darwin" `T.isInfixOf` joined) `shouldBe` True
 
     -- Cross-module invariant: the two consumers of 'TerminalStatus'
     -- ('terminalToOutcome' in CI.Verdict, 'terminalToCommitStatus' in

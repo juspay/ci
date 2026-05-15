@@ -21,22 +21,22 @@ import CI.CommitStatus (postStatusFor, seedPending)
 import CI.Gh (viewRepo)
 import CI.Git (Sha, ensureCleanTree, resolveSha, shaPlaceholder, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
-import CI.Hosts (Hosts, hostFromText, hostsPath, loadHosts, lookupHost, promptAndPersistHost)
+import CI.Hosts (Hosts, hostsPlatforms, loadHosts, lookupHost)
 import CI.Justfile (Attribute (..), Recipe (..), RecipeName, fetchDump)
 import CI.LogPath (logDirFor, logPathFor, platformDir)
 import CI.Node (NodeId (..), parseNodeId)
-import CI.Platform (Platform, localPlatform, osToPlatform)
+import CI.Platform (Platform, localPlatform, osToPlatforms, platformOs)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
 import CI.Root (findRoot)
 import CI.Transport (Transport (Local), commandFor, sshTransport)
 import CI.Verdict (exitWithVerdict, newOutcomes, recordOutcome)
 import Control.Concurrent.Async (link, wait, withAsync)
-import Control.Monad (foldM, void)
+import Control.Monad (void)
 import Data.Foldable (for_)
 import Data.List (nub)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (isJust, isNothing)
+import Data.Maybe (isJust)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
@@ -246,23 +246,14 @@ buildProcessCompose mode = do
     reachable <- dieOnLeft $ reachableSubgraph rootName recipes
     recipeGraph <- dieOnLeft $ lowerToRunnerGraph reachable
     localPlat <- dieOnLeft localPlatform
-    let pipelinePlatforms = pipelinePlatformsFor rootRecipe localPlat
+    hosts <- loadHosts
+    let pipelinePlatforms = pipelinePlatformsFor rootRecipe localPlat hosts
         nodeGraph = fanOut pipelinePlatforms recipeGraph
-    hosts <- resolveHostsFor mode localPlat pipelinePlatforms
-    -- A platform with an entry in @hosts.json@ runs through that runner
-    -- (ssh or pu) — even when it matches the local platform. The
-    -- hosts-file is the override: presence wins over the local default.
-    -- 'hasRemote' therefore depends on the *loaded* hosts map, not just
-    -- the pipeline's platform set.
-    let hasRemote = any (\p -> isJust (lookupHost p hosts)) pipelinePlatforms
-    -- Only the SSH branch in 'CI.Transport.commandFor' needs a SHA, so
-    -- we shell out to git only when at least one lane is remote. In
-    -- 'DumpRun' we go further: skip 'resolveSha' even when remote lanes
-    -- exist, letting 'commandForNode' fall back to 'shaPlaceholder'.
-    -- That keeps @dump-yaml@ working outside a git checkout in both
-    -- single- and multi-platform pipelines.
+        hasRemote = any (/= localPlat) pipelinePlatforms || any (\p -> isJust (lookupHost p hosts)) pipelinePlatforms
+    -- @DumpRun@ skips @resolveSha@ and the SSH branch falls back to
+    -- 'shaPlaceholder' so @dump-yaml@ works outside a git checkout.
     remoteLaneState <- case mode of
-        DumpRun -> pure DumpPlaceholder
+        DumpRun -> pure (RemoteLanes shaPlaceholder)
         _
             | hasRemote -> RemoteLanes <$> (dieOnLeft =<< resolveSha)
             | otherwise -> pure NoRemoteLanes
@@ -270,17 +261,30 @@ buildProcessCompose mode = do
         (yamlWorkingDir, yamlLogLocation) = yamlPathsFor mode
     pure $ toProcessCompose yamlWorkingDir mkCommand yamlLogLocation nodeGraph
 
-{- | The pipeline's platform set, derived from the root recipe's
-@[linux] [macos] ...@ attributes. A root with no OS attrs falls
-back to @[localPlatform]@ — a single-host pipeline behaves
-identically to the pre-fanout shape. Duplicates are removed but
-order is preserved (attribute order in the source).
+{- | The pipeline's platform set: the intersection of (the root
+recipe's declared OS families) with (the systems we have either a
+hosts.json entry for OR are running on locally).
+
+  * Root @[linux] [macos]@ + local @x86_64-linux@ + hosts.json
+    @{aarch64-darwin: ...}@ → @{x86_64-linux, aarch64-darwin}@.
+  * Root @[linux]@ + local @x86_64-linux@ + empty hosts.json →
+    @{x86_64-linux}@ (local-only, no macos).
+  * Root with no OS attrs → @{localPlat}@ (single-host shape,
+    same as before fanout existed).
+
+A system in @hosts.json@ whose OS family doesn't appear in the root
+attributes is silently ignored — the user opts in by adding the OS
+attribute to the root. Symmetrically, an OS family in the root that
+matches no configured system is silently empty for that family —
+the user opts in by adding an entry to @hosts.json@.
 -}
-pipelinePlatformsFor :: Recipe -> Platform -> [Platform]
-pipelinePlatformsFor root localPlat =
-    case nub [p | Os o <- root.attributes, Just p <- [osToPlatform o]] of
-        [] -> [localPlat]
-        ps -> ps
+pipelinePlatformsFor :: Recipe -> Platform -> Hosts -> [Platform]
+pipelinePlatformsFor root localPlat hosts =
+    let rootOsFamilies = [o | Os o <- root.attributes]
+        configured = nub (localPlat : hostsPlatforms hosts)
+     in if null rootOsFamilies
+            then [localPlat]
+            else filter (\p -> platformOs p `elem` rootOsFamilies) configured
 
 {- | Cross-product the recipe DAG with the pipeline's platform set: one
 'NodeId' per @(recipe, platform)@, edges replicated lane-by-lane
@@ -294,113 +298,42 @@ fanOut platforms g =
     G.vertices [NodeId r p | r <- G.vertexList g, p <- platforms]
         `G.overlay` G.edges [(NodeId r p, NodeId d p) | (r, d) <- G.edgeList g, p <- platforms]
 
-{- | Load the hosts config and reconcile it with the pipeline's remote
-lanes. Three modes, three policies:
-
- * 'LocalRun' — prompt-on-miss and persist. Interactive dev runs.
- * 'StrictRun' — die-on-miss with a useful message. No TTY mid-run,
-   so a missing host must surface before the pipeline starts.
- * 'DumpRun' — best-effort: return the loaded map verbatim. Missing
-   entries render as placeholder commands inside 'commandForNode' so
-   inspection works even when the runner has no hosts.json (the
-   @dump-yaml@ smoke test on a remote-only-via-SSH lane).
+{- | Orchestrator-side branching: do we have a SHA to clone on the
+remote, or are all lanes inline? @DumpRun@ short-circuits to
+@RemoteLanes shaPlaceholder@ so inspection works outside a git
+checkout; real runs hit @resolveSha@ when at least one lane is
+remote.
 -}
-resolveHostsFor :: RunMode -> Platform -> [Platform] -> IO Hosts
-resolveHostsFor mode localPlat platforms = do
-    hosts0 <- loadHosts
-    let remotes = filter (/= localPlat) platforms
-    case mode of
-        LocalRun -> foldM addInteractively hosts0 remotes
-        DumpRun -> pure hosts0
-        StrictRun{} -> do
-            let missing = filter (isNothing . (`lookupHost` hosts0)) remotes
-            case missing of
-                [] -> pure hosts0
-                ms -> do
-                    path <- hostsPath
-                    die $
-                        "strict mode (CI=true) requires preconfigured hosts in "
-                            <> path
-                            <> "; missing entries for: "
-                            <> T.unpack (T.intercalate ", " (display <$> ms))
-  where
-    addInteractively hs p = snd <$> promptAndPersistHost p hs
-
-{- | Orchestrator-side branching state: what SHA (if any) does each
-SSH lane clone, and is contract violation acceptable in this run?
-Named after the orchestrator's decision (remote-lane presence and
-inspection-vs-real semantics), not after the downstream
-'CI.Transport' module that ultimately consumes the SHA.
-
-Three states, three semantics:
-
- * 'DumpPlaceholder' — inspection mode ('DumpRun'). Side-effect-free:
-   no @resolveSha@, no @hosts.json@ writes. Every SSH lane renders
-   with 'shaPlaceholder' and tolerates missing host entries (the
-   command renders against a visible @\<unconfigured\>@ placeholder
-   host). This is the state @dump-yaml@ runs in — even outside a
-   git checkout, even on a runner with no hosts.json.
-
- * 'NoRemoteLanes' — real run with no remote work. Every lane runs
-   inline through 'Local' transport; reaching the SSH branch from
-   this state is a contract violation (caught by 'shaContractError').
-
- * 'RemoteLanes' — real run with at least one SSH lane. Carries the
-   SHA every SSH lane will clone.
-
-The 'DumpPlaceholder' constructor folds the "is this inspection
-mode?" fact into the type 'commandForNode' already consumes, so
-'commandForNode' no longer needs a 'RunMode' parameter: pattern
-matching on 'DumpPlaceholder' captures the same disambiguation
-the previous @DumpRun \<- mode@ guards expressed, but as a
-type-level invariant rather than a hand-maintained convention
-between 'buildProcessCompose' and 'commandForNode'.
--}
-data RemoteLaneState = DumpPlaceholder | NoRemoteLanes | RemoteLanes Sha
+data RemoteLaneState = NoRemoteLanes | RemoteLanes Sha
 
 {- | Per-node command construction.
 
-Selection rule, in order:
+  * Hosts-entry present → SSH through that runner (overrides local
+    inline execution even when @node.platform == localPlat@). The
+    smart constructor 'sshTransport' classifies arch internally.
 
-  1. If the node's platform has an entry in @hosts.json@, route
-     through that runner — even when the platform matches the
-     local host. The hosts-file is an *override*; presence wins.
-     This is what lets a linux runner exercise its own linux lane
-     via, say, @pu connect srid1@ for incus-cluster CI testing.
+  * No hosts entry, but platform matches local → inline @Local@.
 
-  2. Otherwise, if the node's platform matches the local host,
-     run inline against the worktree pc has already @chdir@'d into.
-
-  3. Otherwise (non-local platform with no host), fail. In
-     'LocalRun'/'StrictRun' this is unreachable — 'resolveHostsFor'
-     prompts or dies for any missing non-local entry before we
-     reach this function. In 'DumpRun' it's expected (the whole
-     reason 'DumpRun' exists), and the SSH command renders against
-     a visible placeholder so the YAML's structural keys still
-     reflect the real fanout.
+  * No hosts entry, non-local platform → unreachable by the
+    'pipelinePlatformsFor' invariant. Every platform in
+    @pipelinePlatforms@ either matches local or has a hosts entry
+    by construction, so a 'Nothing' on the non-local branch means
+    something is wrong upstream.
 -}
 commandForNode :: RemoteLaneState -> Platform -> Hosts -> NodeId -> T.Text
 commandForNode remoteLaneState localPlat hosts node = case lookupHost node.platform hosts of
     Just h -> case remoteLaneState of
-        RemoteLanes sha -> commandFor (ssh h sha) node.recipe
-        DumpPlaceholder -> commandFor (ssh h shaPlaceholder) node.recipe
+        RemoteLanes sha -> commandFor (sshTransport h sha localPlat node.platform) node.recipe
         NoRemoteLanes -> shaContractError
     Nothing
         | node.platform == localPlat -> commandFor Local node.recipe
-        | DumpPlaceholder <- remoteLaneState ->
-            commandFor (ssh (hostFromText "<unconfigured>") shaPlaceholder) node.recipe
         | otherwise -> hostContractError
   where
-    -- Hand 'CI.Transport' both platforms via the smart constructor;
-    -- arch classification lives there, next to the consumer that
-    -- varies on it, and the resulting 'Transport' value carries
-    -- the decision rather than the raw classifier inputs.
-    ssh h sha = sshTransport h sha localPlat node.platform
     hostContractError =
         error $
             "internal error: no SSH host for "
                 <> T.unpack (display node.platform)
-                <> " (resolveHostsFor should have caught this)"
+                <> " (pipelinePlatformsFor should have excluded this)"
     shaContractError =
         error $
             "internal error: hosts entry for "

@@ -36,29 +36,29 @@ Process-compose node names are `<recipe>@<platform>` (e.g. `ci::build@linux`), a
 
 A node whose platform doesn't match the local host runs via SSH: the runner pipes a `git bundle` through `ssh <host>`, the remote shell clones it into a tempdir, checks out the pipeline's `HEAD` SHA, and runs `just --no-deps <recipe>` there. Per-node stdout/stderr streams back over SSH and lands in `.ci/<sha>/<platform>/<recipe>.log` exactly as a local node would.
 
-Hosts are configured in `~/.config/ci/hosts.json`, keyed by platform:
+Hosts are configured in `~/.config/ci/hosts.json`, keyed by **Nix system tuple**:
 
 ```json
 {
-  "linux": "builder.example.com",
-  "macos": "mac-runner.example.com"
+  "x86_64-linux": "builder.example.com",
+  "aarch64-darwin": "mac-runner.example.com"
 }
 ```
 
-In local mode (`CI` unset) a missing entry for a non-local platform is prompted for and persisted. In strict mode (`CI=true`) the runner refuses to start if any non-local platform is unconfigured — there's no TTY mid-run, so the prompt would deadlock the pipeline. Edit the file (or run once locally) before triggering strict-mode CI on a multi-platform root.
+The pipeline's fanout = (root recipe's OS families × configured systems matching those families) ∪ {local system if its family matches}. A `[linux]` attribute on the root matches any `*-linux` system in `hosts.json`; `[macos]` matches any `*-darwin`. Systems without entries are silently dropped — the user opts in by writing the file.
 
-**Local platform override.** An entry for the *local* platform takes precedence over inline execution: configure `"linux": "pu connect srid1"` from a linux host and the linux lane routes through `pu` instead of running in the worktree. This is the path for exercising remote runners (or testing failure modes) without leaving the local box.
+**Local platform override.** An entry for the *local* system takes precedence over inline execution: configure `"x86_64-linux": "pu connect srid1"` from an x86_64-linux host and the linux lane routes through `pu` instead of running in the worktree. The path for exercising remote runners (or testing failure modes) without leaving the local box.
 
-The remote host needs `just`, `git`, and any tools the recipes themselves use available on its PATH; no agent is installed, only the shell command stream.
+The remote host needs `nix`, `git`, and any tools the recipes themselves use available on its PATH. `just` does *not* need to be pre-installed — the runner ships its closure via `nix-store --export | <runner> nix-store --import` on same-arch remotes; cross-arch falls back to the remote's `just` on PATH (or to a future drv-realise from the remote's own substituter).
 
 #### Incus / `pu connect` runners
 
-Hosts spelled as `pu connect <name>` in the config are routed through the `pu` incus client instead of `ssh`. The remote-command shape is identical (the prefix already names the runner+target), so a host configured as `"macos": "pu connect mac-vm"` Just Works as a drop-in:
+Hosts spelled as `pu connect <name>` in the config are routed through the `pu` incus client instead of `ssh`. The remote-command shape is identical (the prefix already names the runner+target), so a host configured as `"aarch64-darwin": "pu connect mac-vm"` Just Works as a drop-in:
 
 ```json
 {
-  "linux": "builder.example.com",
-  "macos": "pu connect mac-vm"
+  "x86_64-linux": "builder.example.com",
+  "aarch64-darwin": "pu connect mac-vm"
 }
 ```
 
