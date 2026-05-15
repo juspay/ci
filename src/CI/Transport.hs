@@ -22,6 +22,7 @@ prefix uses the @pu@ incus client verbatim instead. See
 -}
 module CI.Transport (
     Transport (..),
+    ArchKind (..),
     commandFor,
     remoteRunner,
 )
@@ -37,7 +38,7 @@ import Data.Text.Display (display)
 {- | Where a node runs. 'Local' means the spawning process-compose
 already @chdir@'d into the pinned worktree (see
 'CI.Pipeline.RunMode') so the @just@ subprocess inherits the
-right cwd; @Ssh host sha@ means the command is a wrapper that
+right cwd; @Ssh host sha arch@ means the command is a wrapper that
 bundles HEAD to @host@, clones it there, checks out @sha@, and
 runs @just@ in that remote checkout.
 
@@ -51,8 +52,29 @@ Despite the name, @Ssh@ also covers incus-style runners spelled as
 @pu connect \<name\>@ in @hosts.json@ — the constructor names the
 *kind* of execution (remote, SSH-shaped command-prefix), not the
 literal binary. See 'remoteRunner'.
+
+The 'ArchKind' decides whether to nix-copy our local @just@ closure
+to the remote (only sound when the remote can execute the binary).
 -}
-data Transport = Local | Ssh Host Sha
+data Transport = Local | Ssh Host Sha ArchKind
+
+{- | Whether the remote can execute binaries from the runner's own
+@\/nix\/store@.
+
+  * 'NativeArch' — same platform (and assumed same architecture).
+    The wrapper @nix-store --export@s the local @just@ closure and
+    imports it on the remote, then invokes @just@ via the absolute
+    @\/nix\/store@ path. Works even when @just@ isn't on the
+    remote's PATH.
+
+  * 'ForeignArch' — different platform (e.g. linux runner reaching
+    a darwin remote). Our local binary won't run there, so we skip
+    the closure-copy and invoke @just@ from the remote's PATH.
+
+The classifier sits one level up in 'CI.Pipeline': @node.platform
+== localPlat@ ⇒ 'NativeArch'.
+-}
+data ArchKind = NativeArch | ForeignArch
 
 {- | The shell command process-compose runs for one node. Local
 nodes use the same @just --no-deps@ invocation as before
@@ -62,7 +84,7 @@ nodes emit the three-call bundle+clone+run dance against
 -}
 commandFor :: Transport -> RecipeName -> Text
 commandFor Local r = recipeCommand r
-commandFor (Ssh host sha) r = sshCommand host sha r
+commandFor (Ssh host sha arch) r = sshCommand host sha r arch
 
 {- | The shell-tokens prefix that runs a command on this 'Host'.
 Two flavours:
@@ -113,28 +135,39 @@ the remote has Nix installed (which it must, to run the recipes
 themselves); the closure-export pipe is transport-agnostic and
 works the same way over both runners.
 -}
-sshCommand :: Host -> Sha -> RecipeName -> Text
-sshCommand host sha recipe =
-    T.intercalate
-        " && "
-        [ "nix-store --export $(nix-store --query --requisites "
-            <> T.pack justBin
-            <> ") | "
-            <> r
-            <> " nix-store --import > /dev/null"
-        , "T=$(" <> r <> " mktemp -d)"
+sshCommand :: Host -> Sha -> RecipeName -> ArchKind -> Text
+sshCommand host sha recipe arch =
+    T.intercalate " && " (nixCopySteps <> setupSteps)
+        <> "; "
+        <> r
+        <> " \"cd $T/src && "
+        <> remoteJust
+        <> "\"; rc=$?; "
+        <> r
+        <> " \"rm -rf $T\"; exit $rc"
+  where
+    r = remoteRunner host
+    setupSteps =
+        [ "T=$(" <> r <> " mktemp -d)"
         , "git bundle create - --all 2>/dev/null | "
             <> r
             <> " \"cat > $T/repo.bundle && cd $T && git clone --quiet repo.bundle src && cd src && git -c advice.detachedHead=false checkout --quiet "
             <> display sha
             <> "\""
         ]
-        <> "; "
-        <> r
-        <> " \"cd $T/src && "
-        <> recipeCommand recipe
-        <> "\"; rc=$?; "
-        <> r
-        <> " \"rm -rf $T\"; exit $rc"
-  where
-    r = remoteRunner host
+    -- Same-arch only: push the local @just@ closure so the remote
+    -- can invoke it by absolute path even without @just@ on PATH.
+    -- Skipped for foreign-arch (the binary wouldn't be executable
+    -- there anyway).
+    nixCopySteps = case arch of
+        NativeArch ->
+            [ "nix-store --export $(nix-store --query --requisites "
+                <> T.pack justBin
+                <> ") | "
+                <> r
+                <> " nix-store --import > /dev/null"
+            ]
+        ForeignArch -> []
+    remoteJust = case arch of
+        NativeArch -> recipeCommand recipe
+        ForeignArch -> "just --no-deps " <> display recipe

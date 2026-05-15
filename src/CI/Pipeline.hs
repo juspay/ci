@@ -29,7 +29,7 @@ import CI.Platform (Platform, localPlatform, osToPlatform)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
 import CI.Root (findRoot)
-import CI.Transport (Transport (..), commandFor)
+import CI.Transport (ArchKind (..), Transport (..), commandFor)
 import CI.Verdict (exitWithVerdict, newOutcomes, recordOutcome)
 import Control.Concurrent.Async (link, wait, withAsync)
 import Control.Monad (foldM, void)
@@ -359,16 +359,23 @@ Selection rule, in order:
 commandForNode :: RunMode -> RemoteLaneState -> Platform -> Hosts -> NodeId -> T.Text
 commandForNode mode remoteLaneState localPlat hosts node = case lookupHost node.platform hosts of
     Just h -> case remoteLaneState of
-        RemoteLanes sha -> commandFor (Ssh h sha) node.recipe
+        RemoteLanes sha -> commandFor (Ssh h sha arch) node.recipe
         NoRemoteLanes
-            | DumpRun <- mode -> commandFor (Ssh h shaPlaceholder) node.recipe
+            | DumpRun <- mode -> commandFor (Ssh h shaPlaceholder arch) node.recipe
             | otherwise -> shaContractError
     Nothing
         | node.platform == localPlat -> commandFor Local node.recipe
         | DumpRun <- mode ->
-            commandFor (Ssh (hostFromText "<unconfigured>") shaPlaceholder) node.recipe
+            commandFor (Ssh (hostFromText "<unconfigured>") shaPlaceholder arch) node.recipe
         | otherwise -> hostContractError
   where
+    -- Same-platform target ⇒ same-arch (modulo cross-arch within one
+    -- Platform, e.g. x86_64-linux runner reaching aarch64-linux; we
+    -- don't refine here yet — the cost is only the closure-copy step,
+    -- which fails fast with a clear "Exec format error" if it bites).
+    arch
+        | node.platform == localPlat = NativeArch
+        | otherwise = ForeignArch
     hostContractError =
         error $
             "internal error: no SSH host for "
