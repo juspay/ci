@@ -1,20 +1,25 @@
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 {- | How a 'CI.Node.NodeId' actually executes: locally against the
 pipeline's pinned worktree, or remotely against a shared
 checkout that's set up once per host per run.
 
-Remote execution is split across two transport flavours:
+The 'Ssh' transport carries the remote-execution context (host,
+SHA, target platform); whether a given remote node is the
+per-platform setup node or a recipe node is read off the
+'CI.Node.NodeId' inside 'commandFor'. That keeps the setup-vs-
+recipe discrimination at one site (here) instead of being decided
+once in 'CI.Pipeline' to pick a constructor and again here to
+pick a branch.
 
-  * 'SshSetup' — runs first per remote platform. Ships the @just@
-    derivation, bundles @HEAD@ across, and clones into
-    @~\/.cache\/ci\/\<short-sha\>\/\<platform\>\/src@. Idempotent:
-    same-SHA reruns hit the cached directory and skip the bundle.
-
-  * 'SshRecipe' — every recipe node that targets that platform
-    @cd@s into the shared cached dir and runs the realised
-    @just --no-deps \<recipe\>@. No bundle, no clone — that work
-    happened in the setup node, which the recipe @depends_on@.
+Remote setup nodes ship the @just@ derivation, bundle @HEAD@
+across, and clone into
+@~\/.cache\/ci\/\<short-sha\>\/\<platform\>\/src@. Idempotent:
+same-SHA reruns hit the cached directory and skip the bundle.
+Remote recipe nodes @cd@ into the same shared cached directory
+(which their @depends_on@ setup node has already populated) and
+run the realised @just --no-deps \<recipe\>@.
 
 The split collapses N bundle transfers (one per recipe per
 platform) down to one per remote per run, and to zero on cache
@@ -27,8 +32,6 @@ string — bare hostnames, @user\@host@, aliases from
 -}
 module CI.Transport (
     Transport (..),
-    sshSetupTransport,
-    sshRecipeTransport,
     commandFor,
     remoteRunner,
     cachedRunDir,
@@ -39,6 +42,7 @@ import CI.Git (Sha)
 import CI.Hosts (Host)
 import CI.Justfile (RecipeName, recipeCommand)
 import CI.Nix (realisedJust, shipJustDrv)
+import CI.Node (NodeId (..), isSetupNode)
 import CI.Platform (Platform)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -48,43 +52,31 @@ import Data.Text.Display (display)
 
   * 'Local' — process-compose's working_dir is already the pinned
     worktree, so the @just@ subprocess just runs in cwd.
-  * 'SshSetup' — per-platform setup node. The @just@ drv + a fresh
-    @git bundle@ get shipped to the remote and unpacked into a
-    cached shared directory.
-  * 'SshRecipe' — per-recipe execution. Cd into the shared cached
-    dir (already set up by the corresponding 'SshSetup' node) and
-    run the realised @just@.
-
-The setup/recipe split lets a single bundle transfer per remote
-per run feed every recipe node on that platform, instead of each
-recipe doing its own bundle dance.
+  * 'Ssh' — over @ssh -T \<host\>@ against the shared cached
+    checkout under @\$HOME\/.cache\/ci\/\<short-sha\>\/\<platform\>@.
+    Whether this node is a setup node or a recipe node is
+    discriminated in 'commandFor' off the 'NodeId'.
 -}
 data Transport
     = Local
-    | SshSetup Host Sha Platform
-    | SshRecipe Host Sha Platform
-
--- | Smart constructor for the per-platform setup transport.
-sshSetupTransport :: Host -> Sha -> Platform -> Transport
-sshSetupTransport = SshSetup
-
--- | Smart constructor for the per-recipe remote transport.
-sshRecipeTransport :: Host -> Sha -> Platform -> Transport
-sshRecipeTransport = SshRecipe
+    | Ssh Host Sha Platform
 
 {- | The shell command process-compose runs for one node. Local
-nodes go through 'CI.Justfile.recipeCommand'; remote setup nodes
-emit the drv-copy + bundle + clone dance; remote recipe nodes
-emit just a cd + realise + run.
+nodes go through 'CI.Justfile.recipeCommand'; remote nodes
+dispatch on whether the 'NodeId' is the synthetic setup node
+('isSetupNode') — setup emits the drv-copy + bundle + clone
+dance, recipe nodes emit just a cd + realise + run.
 
-For 'SshSetup' the @recipe@ argument is ignored — the setup node
-doesn't run a recipe; it provisions the shared workspace that
-recipe nodes consume.
+The setup-vs-recipe discrimination lives here at the single site
+that emits the corresponding shell text, so a new node kind
+can't compile cleanly with one branch updated and the other
+forgotten.
 -}
-commandFor :: Transport -> RecipeName -> Text
-commandFor Local r = recipeCommand r
-commandFor (SshSetup host sha targetPlat) _ = setupCommand host sha targetPlat
-commandFor (SshRecipe host sha targetPlat) r = recipeRemoteCommand host sha targetPlat r
+commandFor :: Transport -> NodeId -> Text
+commandFor Local node = recipeCommand node.recipe
+commandFor (Ssh host sha targetPlat) node
+    | isSetupNode node = setupCommand host sha targetPlat
+    | otherwise = recipeRemoteCommand host sha targetPlat node.recipe
 
 {- | The shell-tokens prefix that runs a command on this 'Host':
 @ssh -T \<host\>@. @-T@ suppresses TTY allocation so binary stdin
@@ -158,12 +150,12 @@ already provisioned the cached checkout (process-compose's
 and runs the realised @just@.
 -}
 recipeRemoteCommand :: Host -> Sha -> Platform -> RecipeName -> Text
-recipeRemoteCommand host sha targetPlat recipe =
-    r
+recipeRemoteCommand host sha targetPlat r' =
+    runner
         <> " 'cd "
         <> cachedRunDir sha targetPlat
         <> "/src && "
-        <> realisedJust targetPlat recipe
+        <> realisedJust targetPlat r'
         <> "'"
   where
-    r = remoteRunner host
+    runner = remoteRunner host

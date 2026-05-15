@@ -10,8 +10,9 @@ module CI.TransportSpec (spec) where
 
 import CI.Git (shaPlaceholder)
 import CI.Hosts (hostFromText)
+import CI.Node (NodeId (..), setupRecipe)
 import CI.Platform (Platform (..))
-import CI.Transport (cachedRunDir, commandFor, remoteRunner, sshRecipeTransport, sshSetupTransport)
+import CI.Transport (Transport (..), cachedRunDir, commandFor, remoteRunner)
 import qualified Data.Text as T
 import Test.Hspec
 
@@ -31,12 +32,13 @@ spec = do
         it "uses ~/.cache/ci/<short-sha>/<platform> on the remote" $
             cachedRunDir shaPlaceholder Aarch64Darwin `shouldBe` "$HOME/.cache/ci/0000000/aarch64-darwin"
 
-    describe "setup transport (commandFor . sshSetupTransport)" $ do
+    describe "commandFor Ssh on a setup node" $ do
         let host = hostFromText "remote.example.com"
             sha = shaPlaceholder
-            -- recipe is ignored on the setup path; the setup node
-            -- doesn't run a recipe, it provisions the cache.
-            cmd = commandFor (sshSetupTransport host sha Aarch64Darwin) "irrelevant"
+            -- Setup-vs-recipe is discriminated off the NodeId, not the
+            -- Transport: same 'Ssh' constructor, different node kind.
+            setupNode = NodeId setupRecipe Aarch64Darwin
+            cmd = commandFor (Ssh host sha Aarch64Darwin) setupNode
 
         it "ships the just derivation first" $
             ("nix-store --export" `T.isInfixOf` cmd) `shouldBe` True
@@ -50,11 +52,11 @@ spec = do
         it "skips bundle+clone on cache hit" $
             ("cat > /dev/null; exit 0" `T.isInfixOf` cmd) `shouldBe` True
 
-    describe "recipe transport (commandFor . sshRecipeTransport)" $ do
+    describe "commandFor Ssh on a recipe node" $ do
         let host = hostFromText "remote.example.com"
             sha = shaPlaceholder
-            recipe = "ci::build"
-            cmd = commandFor (sshRecipeTransport host sha Aarch64Darwin) recipe
+            recipeNode = NodeId "ci::build" Aarch64Darwin
+            cmd = commandFor (Ssh host sha Aarch64Darwin) recipeNode
 
         it "cd's into the cached run dir set up by the setup node" $
             ("cd $HOME/.cache/ci/" `T.isInfixOf` cmd) `shouldBe` True

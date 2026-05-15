@@ -25,12 +25,12 @@ import CI.Hosts (Hosts, hostsPlatforms, loadHosts, lookupHost)
 import CI.Justfile (Attribute (..), Recipe (..), RecipeName, fetchDump)
 import qualified CI.Justfile as J
 import CI.LogPath (logDirFor, logPathFor, platformDir)
-import CI.Node (NodeId (..), isSetupNode, parseNodeId, setupRecipe)
+import CI.Node (NodeId (..), parseNodeId, setupRecipe)
 import CI.Platform (Platform, localPlatform, platformOs)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
 import CI.Root (findRoot)
-import CI.Transport (Transport (Local), commandFor, sshRecipeTransport, sshSetupTransport)
+import CI.Transport (Transport (..), commandFor)
 import CI.Verdict (exitWithVerdict, newOutcomes, recordOutcome)
 import Control.Concurrent.Async (link, wait, withAsync)
 import Control.Monad (void)
@@ -367,7 +367,8 @@ data RemoteLaneState = NoRemoteLanes | RemoteLanes Sha
   * Hosts-entry present → SSH through that runner (overrides local
     inline execution even when @node.platform == localPlat@). The
     'Ssh' transport carries the target 'Platform' directly; per-arch
-    behaviour lives in 'CI.Transport.commandFor' and 'CI.Nix'.
+    behaviour and the setup-vs-recipe split live in
+    'CI.Transport.commandFor'.
 
   * No hosts entry, but platform matches local → inline @Local@.
 
@@ -380,12 +381,10 @@ data RemoteLaneState = NoRemoteLanes | RemoteLanes Sha
 commandForNode :: RemoteLaneState -> Platform -> Hosts -> NodeId -> T.Text
 commandForNode remoteLaneState localPlat hosts node = case lookupHost node.platform hosts of
     Just h -> case remoteLaneState of
-        RemoteLanes sha
-            | isSetupNode node -> commandFor (sshSetupTransport h sha node.platform) node.recipe
-            | otherwise -> commandFor (sshRecipeTransport h sha node.platform) node.recipe
+        RemoteLanes sha -> commandFor (Ssh h sha node.platform) node
         NoRemoteLanes -> shaContractError
     Nothing
-        | node.platform == localPlat -> commandFor Local node.recipe
+        | node.platform == localPlat -> commandFor Local node
         | otherwise -> hostContractError
   where
     hostContractError =
