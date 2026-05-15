@@ -32,7 +32,7 @@ where
 import CI.Git (Sha)
 import CI.Hosts (Host)
 import CI.Justfile (RecipeName, recipeCommand)
-import CI.Nix (justDrvFor)
+import CI.Nix (realisedJust, shipJustDrv)
 import CI.Platform (Platform)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -79,58 +79,33 @@ remoteRunner host = "ssh -T " <> display host
 
 {- | The full remote wrapper for one recipe execution. The shape:
 
-  1. @nix-store --export $(...just-drv-closure...) | <runner>
-     nix-store --import@ — push the @just@ *derivation* for the
-     remote's target platform (a tiny file of recipe metadata, not
-     the binary). Idempotent on the remote.
-  2. @T=$(<runner> mktemp -d)@ — captures a fresh remote tempdir.
+  1. 'CI.Nix.shipJustDrv' — push the @just@ derivation for the
+     remote's target platform to its Nix store.
+  2. @T=$(<runner> mktemp -d)@ — fresh remote tempdir.
   3. @git bundle create -@ piped through @<runner>@ to materialise
      the bundle on the remote, clone it, and check out the pinned
      SHA.
-  4. @<runner> "cd ... && \$(nix-store --realise <drv>)/bin/just
-     --no-deps <recipe>"@ — realise the drv on the remote (the
-     remote's substituter chain — typically @cache.nixos.org@ —
-     fetches the native binary for its own arch), then run it
-     against the cloned repo. The realised output path is computed
-     on the *remote* side (note the escaped @\\$()@ so the
-     subshell evaluates there, not locally).
+  4. @<runner> "cd ... && 'CI.Nix.realisedJust' "@ — realise the
+     drv on the remote (its substituter chain fetches the native
+     binary) and invoke @just --no-deps \<recipe\>@.
   5. @<runner> "rm -rf $T"@ — cleanup, always runs.
   6. @exit $rc@ — propagate the build's exit code as the node's.
-
-@<runner>@ is 'remoteRunner': @ssh -T <host>@ for ordinary SSH
-targets, @pu connect <name>@ for incus addresses. The drv-copy
-pipe is transport-agnostic and works the same way over both runners.
 
 The remote needs Nix installed (which it must, to run the recipes
 themselves) — @just@ specifically does *not* need to be on PATH.
 -}
 remoteCommand :: Host -> Sha -> Platform -> RecipeName -> Text
 remoteCommand host sha targetPlat recipe =
-    T.intercalate " && " (drvCopyStep : setupSteps)
+    T.intercalate " && " (shipJustDrv r targetPlat : setupSteps)
         <> "; "
         <> r
-        -- @head -n1@: 'just' is a multi-output derivation (out, man,
-        -- doc) and @nix-store --realise@ prints every output path on
-        -- its own line. The main @out@ output is first; taking just
-        -- that line avoids shell-splitting the rest into stray argv
-        -- positions where one of them (a directory) would otherwise
-        -- error "Is a directory".
-        <> " \"cd $T/src && \\$(nix-store --realise "
-        <> T.pack drv
-        <> " | head -n1)/bin/just --no-deps "
-        <> display recipe
+        <> " \"cd $T/src && "
+        <> realisedJust targetPlat recipe
         <> "\"; rc=$?; "
         <> r
         <> " \"rm -rf $T\"; exit $rc"
   where
     r = remoteRunner host
-    drv = justDrvFor targetPlat
-    drvCopyStep =
-        "nix-store --export $(nix-store --query --requisites "
-            <> T.pack drv
-            <> ") | "
-            <> r
-            <> " nix-store --import > /dev/null"
     setupSteps =
         [ "T=$(" <> r <> " mktemp -d)"
         , "git bundle create - --all 2>/dev/null | "
