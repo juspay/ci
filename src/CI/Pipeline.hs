@@ -212,9 +212,8 @@ together across modes — 'StrictRun' supplies both; 'LocalRun' and
 have to stay in lockstep across future 'RunMode' constructors.
 -}
 yamlPathsFor :: RunMode -> (Maybe FilePath, NodeId -> Maybe FilePath)
-yamlPathsFor LocalRun = (Nothing, const Nothing)
-yamlPathsFor DumpRun = (Nothing, const Nothing)
 yamlPathsFor (StrictRun wt ld) = (Just wt, Just . logPathFor ld)
+yamlPathsFor _ = (Nothing, const Nothing)
 
 {- | Walk @just --dump@ → root → reachable subgraph → topologically
 lowered DAG → fan out across the pipeline's platform set →
