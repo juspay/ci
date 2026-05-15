@@ -29,7 +29,7 @@ import CI.Platform (Platform, localPlatform, osToPlatforms, platformOs)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
 import CI.Root (findRoot)
-import CI.Transport (Transport (Local), commandFor, sshTransport)
+import CI.Transport (Transport (..), commandFor)
 import CI.Verdict (exitWithVerdict, newOutcomes, recordOutcome)
 import Control.Concurrent.Async (link, wait, withAsync)
 import Control.Monad (void)
@@ -323,7 +323,7 @@ data RemoteLaneState = NoRemoteLanes | RemoteLanes Sha
 commandForNode :: RemoteLaneState -> Platform -> Hosts -> NodeId -> T.Text
 commandForNode remoteLaneState localPlat hosts node = case lookupHost node.platform hosts of
     Just h -> case remoteLaneState of
-        RemoteLanes sha -> commandFor (sshTransport h sha localPlat node.platform) node.recipe
+        RemoteLanes sha -> commandFor (Ssh h sha node.platform) node.recipe
         NoRemoteLanes -> shaContractError
     Nothing
         | node.platform == localPlat -> commandFor Local node.recipe

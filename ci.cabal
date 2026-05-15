@@ -16,6 +16,8 @@ library
                       CI.Hosts
                       CI.Justfile
                       CI.LogPath
+                      CI.Nix
+                      CI.Nix.Splice
                       CI.Node
                       CI.Pipeline
                       CI.Platform
@@ -36,6 +38,7 @@ library
         , filepath
         , network
         , process
+        , template-haskell
         , text
         , text-display
         , time
