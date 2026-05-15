@@ -1,10 +1,17 @@
-# Run all checks (build + flake check) concurrently, then smoke-test the binary
-# on each target platform. The [linux] [macos] attributes fan the pipeline out
-# across both lanes: every reachable recipe gets a (recipe, platform) node, the
-# local lane runs against the worktree, and the macos lane SSHs to whatever
+# Run all checks (build + flake check) concurrently with the binary smoke
+# test, since run-check only depends on build (not flake-check). The
+# [linux] [macos] attributes fan the pipeline out across both lanes: every
+# reachable recipe gets a (recipe, platform) node, the local lane runs
+# against the worktree, and the macos lane SSHs to whatever
 # `~/.config/ci/hosts.json` maps `macos` to.
+#
+# [parallel] on `default` is what lets run-check start as soon as build
+# finishes, in parallel with flake-check. Without it, the runner would
+# chain run-check behind checks (and therefore behind flake-check too)
+# even though run-check has no flake-check dependency.
 [linux]
 [macos]
+[parallel]
 [metadata("ci")]
 default: checks run-check
 
