@@ -35,8 +35,8 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.IO as TIO
 import Data.Text.Display (Display (..), display)
+import qualified Data.Text.IO as TIO
 import System.Exit (ExitCode (..), exitWith)
 
 -- | The terminal outcome of one recipe in a pipeline run. 'Unreported'
