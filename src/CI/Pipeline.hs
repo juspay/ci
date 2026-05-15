@@ -30,7 +30,7 @@ import CI.Platform (Platform, localPlatform, platformOs)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
 import CI.Root (findRoot)
-import CI.Transport (Transport (Local), commandFor, sshTransport)
+import CI.Transport (Transport (Local), commandFor, sshRecipeTransport, sshSetupTransport)
 import CI.Verdict (exitWithVerdict, newOutcomes, recordOutcome)
 import Control.Concurrent.Async (link, wait, withAsync)
 import Control.Monad (void)
@@ -260,7 +260,7 @@ buildProcessCompose mode = do
                     <> " or add an entry to ~/.config/ci/hosts.json for one of: "
                     <> unwords (show <$> rootOsFamilies rootRecipe)
         _ -> pure ()
-    let nodeGraph = fanOut pipelinePlatforms recipeGraph
+    let nodeGraph = fanOut localPlat hosts pipelinePlatforms recipeGraph
         hasRemote = any (\p -> isJust (lookupHost p hosts)) pipelinePlatforms
     -- @DumpRun@ skips @resolveSha@ and the SSH branch falls back to
     -- 'shaPlaceholder' so @dump-yaml@ works outside a git checkout.
@@ -306,17 +306,64 @@ which families couldn't be satisfied).
 rootOsFamilies :: Recipe -> [J.Os]
 rootOsFamilies r = [o | Os o <- r.attributes]
 
-{- | Cross-product the recipe DAG with the pipeline's platform set: one
-'NodeId' per @(recipe, platform)@, edges replicated lane-by-lane
-with no cross-platform connections. The lanes run independently;
-a failure on linux doesn't block macos and vice versa (and the
-cross-lane failure tolerance ('restart: no', 'exit_on_skipped:
-false') already in 'CI.ProcessCompose' carries that through).
+{- | The recipe name we reserve for the synthetic per-platform setup
+node. Leading underscore signals "internal, not a user recipe";
+the same prefix convention kolu uses for private lanes.
 -}
-fanOut :: [Platform] -> G.AdjacencyMap RecipeName -> G.AdjacencyMap NodeId
-fanOut platforms g =
-    G.vertices [NodeId r p | r <- G.vertexList g, p <- platforms]
-        `G.overlay` G.edges [(NodeId r p, NodeId d p) | (r, d) <- G.edgeList g, p <- platforms]
+setupRecipe :: RecipeName
+setupRecipe = "_ci-setup"
+
+-- | Whether a 'NodeId' is the synthetic setup node for its platform.
+isSetupNode :: NodeId -> Bool
+isSetupNode n = n.recipe == setupRecipe
+
+{- | Cross-product the recipe DAG with the pipeline's platform set:
+one 'NodeId' per @(recipe, platform)@, edges replicated
+lane-by-lane with no cross-platform connections. Each remote
+platform also gets a synthetic @_ci-setup\@\<platform\>@ node;
+every recipe node on that platform @depends_on@ it. The setup
+node ships the @just@ derivation + a fresh @git bundle@ once per
+remote per run; recipe nodes reuse the cached checkout.
+
+Platforms that route inline ('localPlat' with no hosts entry)
+don't need a setup node — there's no bundle to ship, no remote
+clone to coordinate.
+
+Lanes run independently; a failure on linux doesn't block macos
+and vice versa (and the cross-lane failure tolerance
+@restart: no@ / @exit_on_skipped: false@ in 'CI.ProcessCompose'
+carries that through).
+-}
+fanOut :: Platform -> Hosts -> [Platform] -> G.AdjacencyMap RecipeName -> G.AdjacencyMap NodeId
+fanOut localPlat hosts platforms g =
+    recipeVertices
+        `G.overlay` G.edges recipeEdges
+        `G.overlay` G.vertices setupNodes
+        `G.overlay` G.edges setupEdges
+  where
+    recipeVertices = G.vertices [NodeId r p | r <- G.vertexList g, p <- platforms]
+    recipeEdges = [(NodeId r p, NodeId d p) | (r, d) <- G.edgeList g, p <- platforms]
+    -- Remote platforms: anything with a hosts entry runs over SSH.
+    -- A local platform with a hosts entry counts as remote (the
+    -- host-override case).
+    remotePlatforms = filter (`isRemote` (localPlat, hosts)) platforms
+    setupNodes = [NodeId setupRecipe p | p <- remotePlatforms]
+    -- Every recipe node on a remote platform depends on that
+    -- platform's setup node.
+    setupEdges =
+        [ (NodeId r p, NodeId setupRecipe p)
+        | r <- G.vertexList g
+        , p <- remotePlatforms
+        ]
+
+{- | A platform routes through SSH if it has a hosts.json entry, or
+if it isn't the local platform (the latter shouldn't happen post-
+'pipelinePlatformsFor' filtering, but the check is cheap and
+explicit).
+-}
+isRemote :: Platform -> (Platform, Hosts) -> Bool
+isRemote p (localPlat, hosts) =
+    isJust (lookupHost p hosts) || p /= localPlat
 
 {- | Orchestrator-side branching: do we have a SHA to clone on the
 remote, or are all lanes inline? @DumpRun@ short-circuits to
@@ -344,7 +391,9 @@ data RemoteLaneState = NoRemoteLanes | RemoteLanes Sha
 commandForNode :: RemoteLaneState -> Platform -> Hosts -> NodeId -> T.Text
 commandForNode remoteLaneState localPlat hosts node = case lookupHost node.platform hosts of
     Just h -> case remoteLaneState of
-        RemoteLanes sha -> commandFor (sshTransport h sha node.platform) node.recipe
+        RemoteLanes sha
+            | isSetupNode node -> commandFor (sshSetupTransport h sha node.platform) node.recipe
+            | otherwise -> commandFor (sshRecipeTransport h sha node.platform) node.recipe
         NoRemoteLanes -> shaContractError
     Nothing
         | node.platform == localPlat -> commandFor Local node.recipe

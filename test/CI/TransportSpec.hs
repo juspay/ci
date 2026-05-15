@@ -1,17 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 {- | Tests for "CI.Transport"'s runner-prefix selection and the
-drv-copy + realise remote command shape. The end-to-end
+two remote-command shapes (setup + per-recipe). The end-to-end
 bundle+clone+run path is exercised by the @ci::run-check@ smoke
-test in @ci.just@; this spec locks down the structural choices in
-isolation.
+test in @ci.just@; this spec locks down the structural choices
+in isolation.
 -}
 module CI.TransportSpec (spec) where
 
 import CI.Git (shaPlaceholder)
 import CI.Hosts (hostFromText)
 import CI.Platform (Platform (..))
-import CI.Transport (commandFor, remoteRunner, sshTransport)
+import CI.Transport (cachedRunDir, commandFor, remoteRunner, sshRecipeTransport, sshSetupTransport)
 import qualified Data.Text as T
 import Test.Hspec
 
@@ -27,27 +27,43 @@ spec = do
         it "treats an ssh-config alias the same — anything ssh dials works" $
             remoteRunner (hostFromText "srid1") `shouldBe` "ssh -T srid1"
 
-    describe "commandFor (Ssh ... targetPlat)" $ do
+    describe "cachedRunDir" $
+        it "uses ~/.cache/ci/<short-sha>/<platform> on the remote" $
+            cachedRunDir shaPlaceholder Aarch64Darwin `shouldBe` "$HOME/.cache/ci/0000000/aarch64-darwin"
+
+    describe "setup transport (commandFor . sshSetupTransport)" $ do
+        let host = hostFromText "remote.example.com"
+            sha = shaPlaceholder
+            -- recipe is ignored on the setup path; the setup node
+            -- doesn't run a recipe, it provisions the cache.
+            cmd = commandFor (sshSetupTransport host sha Aarch64Darwin) "irrelevant"
+
+        it "ships the just derivation first" $
+            ("nix-store --export" `T.isInfixOf` cmd) `shouldBe` True
+
+        it "bundles HEAD into the remote cache dir" $
+            ("git bundle create" `T.isInfixOf` cmd) `shouldBe` True
+
+        it "clones into the cached run dir on the remote" $
+            ("$HOME/.cache/ci/" `T.isInfixOf` cmd) `shouldBe` True
+
+        it "skips bundle+clone on cache hit" $
+            ("cat > /dev/null; exit 0" `T.isInfixOf` cmd) `shouldBe` True
+
+    describe "recipe transport (commandFor . sshRecipeTransport)" $ do
         let host = hostFromText "remote.example.com"
             sha = shaPlaceholder
             recipe = "ci::build"
-            cmd = commandFor (sshTransport host sha Aarch64Darwin) recipe
+            cmd = commandFor (sshRecipeTransport host sha Aarch64Darwin) recipe
 
-        it "ships the just derivation via nix-store --export | nix-store --import" $
-            ("nix-store --export" `T.isInfixOf` cmd) `shouldBe` True
+        it "cd's into the cached run dir set up by the setup node" $
+            ("cd $HOME/.cache/ci/" `T.isInfixOf` cmd) `shouldBe` True
 
-        it "realises the drv on the remote (escaped $ so the subshell runs there, not locally)" $
-            ("\\$(nix-store --realise" `T.isInfixOf` cmd) `shouldBe` True
+        it "realises the drv on the remote and invokes /bin/just" $
+            ("$(nix-store --realise" `T.isInfixOf` cmd) `shouldBe` True
 
-        it "invokes just by the realised /bin/just path with --no-deps + the recipe" $
+        it "ends with --no-deps + the recipe" $
             ("/bin/just --no-deps ci::build" `T.isInfixOf` cmd) `shouldBe` True
 
-        it "uses the runner prefix for every remote call" $
-            ("ssh -T remote.example.com" `T.isInfixOf` cmd) `shouldBe` True
-
-        it "main recipe is in the && chain (setup failure stops it, not just cleanup)" $ do
-            -- The && chain must contain the main recipe invocation so that a failed
-            -- nix-store import or git clone aborts before running the recipe.
-            -- If the recipe were after "; " it would run with uninitialized $T.
-            let parts = T.splitOn " && " cmd
-            any ("/bin/just --no-deps" `T.isInfixOf`) parts `shouldBe` True
+        it "does not re-bundle (setup did that)" $
+            ("git bundle" `T.isInfixOf` cmd) `shouldBe` False

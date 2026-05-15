@@ -1,32 +1,37 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 {- | How a 'CI.Node.NodeId' actually executes: locally against the
-pipeline's pinned worktree, or remotely against a snapshotted
-@git bundle@ uploaded over an SSH-shaped runner. The split lives
-here so the only module that knows about runner + bundle command
-shapes is this one — every other consumer ('CI.Pipeline',
-'CI.Verdict', etc.) sees only the typed value plus the 'commandFor'
-rendering.
+pipeline's pinned worktree, or remotely against a shared
+checkout that's set up once per host per run.
 
-Remote execution: the runner ships the target-platform @just@
-*derivation* (via @nix-store --export | nix-store --import@) and
-the remote @nix-store --realise@s it to a native binary. That
-sidesteps the cross-arch problem entirely — we don't ship our
-locally-built binary; the remote's substituter chain fetches the
-right one for its own arch. The remote needs @nix@, @git@, and
-whatever the recipes themselves use, but @just@ specifically does
-*not* need to be pre-installed on PATH.
+Remote execution is split across two transport flavours:
 
-Every remote node runs over plain @ssh -T \<host\>@ — anything the
-local @ssh@ config knows how to dial works, including aliases from
-@~\/.ssh\/config@. (Incus instances are reached via a host alias
-that names them; no special-case client involved at this layer.)
+  * 'SshSetup' — runs first per remote platform. Ships the @just@
+    derivation, bundles @HEAD@ across, and clones into
+    @~\/.cache\/ci\/\<short-sha\>\/\<platform\>\/src@. Idempotent:
+    same-SHA reruns hit the cached directory and skip the bundle.
+
+  * 'SshRecipe' — every recipe node that targets that platform
+    @cd@s into the shared cached dir and runs the realised
+    @just --no-deps \<recipe\>@. No bundle, no clone — that work
+    happened in the setup node, which the recipe @depends_on@.
+
+The split collapses N bundle transfers (one per recipe per
+platform) down to one per remote per run, and to zero on cache
+hits.
+
+Every remote command runs over plain @ssh -T \<host\>@. Anything
+the local @ssh@ config knows how to dial works as the host
+string — bare hostnames, @user\@host@, aliases from
+@~\/.ssh\/config@ (incus instances are reached via an ssh alias).
 -}
 module CI.Transport (
-    Transport (Local),
-    sshTransport,
+    Transport (..),
+    sshSetupTransport,
+    sshRecipeTransport,
     commandFor,
     remoteRunner,
+    cachedRunDir,
 )
 where
 
@@ -39,93 +44,126 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (display)
 
-{- | Where a node runs. 'Local' means the spawning process-compose
-already @chdir@'d into the pinned worktree (see
-'CI.Pipeline.RunMode') so the @just@ subprocess inherits the
-right cwd; @Ssh host sha targetPlat@ means the command is a
-wrapper that bundles HEAD to @host@, ships the @just@ derivation
-for @targetPlat@, clones the repo, checks out @sha@, and runs the
-realised @just@ in that remote checkout.
+{- | Where a node runs:
 
-The 'Sha' rides inside 'Ssh' (not as a separate parameter) because
-it's only meaningful on the SSH path. The 'Platform' carries the
-remote's target arch so we know which drv to ship — same for ssh
-and pu targets; the dispatch is at @remoteRunner@'s prefix check.
+  * 'Local' — process-compose's working_dir is already the pinned
+    worktree, so the @just@ subprocess just runs in cwd.
+  * 'SshSetup' — per-platform setup node. The @just@ drv + a fresh
+    @git bundle@ get shipped to the remote and unpacked into a
+    cached shared directory.
+  * 'SshRecipe' — per-recipe execution. Cd into the shared cached
+    dir (already set up by the corresponding 'SshSetup' node) and
+    run the realised @just@.
 
-Despite the name, @Ssh@ also covers incus-style runners spelled as
-@pu connect \<name\>@ in @hosts.json@ — the constructor names the
-*kind* of execution (remote, SSH-shaped command-prefix), not the
-literal binary.
+The setup/recipe split lets a single bundle transfer per remote
+per run feed every recipe node on that platform, instead of each
+recipe doing its own bundle dance.
 -}
-data Transport = Local | Ssh Host Sha Platform
+data Transport
+    = Local
+    | SshSetup Host Sha Platform
+    | SshRecipe Host Sha Platform
 
-{- | Smart constructor for the remote case. The 'Ssh' data constructor
-is unexported, so this is the only way to build a remote
-'Transport' value — callers can't reach in and pattern-match on the
-field order, and a future shape change (e.g. dropping the 'Platform'
-once drv-resolution moves elsewhere) edits one signature instead of
-every construction site.
--}
-sshTransport :: Host -> Sha -> Platform -> Transport
-sshTransport = Ssh
+-- | Smart constructor for the per-platform setup transport.
+sshSetupTransport :: Host -> Sha -> Platform -> Transport
+sshSetupTransport = SshSetup
+
+-- | Smart constructor for the per-recipe remote transport.
+sshRecipeTransport :: Host -> Sha -> Platform -> Transport
+sshRecipeTransport = SshRecipe
 
 {- | The shell command process-compose runs for one node. Local
-nodes use the same @just --no-deps@ invocation as before
-(preserved verbatim from 'CI.Justfile.recipeCommand'); remote
-nodes emit the drv-copy + bundle + realise + run dance.
+nodes go through 'CI.Justfile.recipeCommand'; remote setup nodes
+emit the drv-copy + bundle + clone dance; remote recipe nodes
+emit just a cd + realise + run.
+
+For 'SshSetup' the @recipe@ argument is ignored — the setup node
+doesn't run a recipe; it provisions the shared workspace that
+recipe nodes consume.
 -}
 commandFor :: Transport -> RecipeName -> Text
 commandFor Local r = recipeCommand r
-commandFor (Ssh host sha targetPlat) r = remoteCommand host sha targetPlat r
+commandFor (SshSetup host sha targetPlat) _ = setupCommand host sha targetPlat
+commandFor (SshRecipe host sha targetPlat) r = recipeRemoteCommand host sha targetPlat r
 
 {- | The shell-tokens prefix that runs a command on this 'Host':
-@ssh -T \<host\>@. @-T@ suppresses TTY allocation so the binary
-stdin (the @git bundle@ stream) survives unmolested. Anything the
-local @ssh@ config knows how to dial — bare @hostname@,
-@user\@host@, an alias from @~\/.ssh\/config@ — works as the host
-string.
+@ssh -T \<host\>@. @-T@ suppresses TTY allocation so binary stdin
+(the @git bundle@ stream) survives unmolested. Anything the local
+@ssh@ config knows how to dial — bare @hostname@, @user\@host@,
+an alias from @~\/.ssh\/config@ — works as the host string.
 -}
 remoteRunner :: Host -> Text
 remoteRunner host = "ssh -T " <> display host
 
-{- | The full remote wrapper for one recipe execution. The shape:
+{- | The shared checkout path on the remote, deterministic from
+@(short-sha, platform)@: @\$HOME\/.cache\/ci\/\<short-sha\>\/\<platform\>@.
+The setup node clones into @\<cachedRunDir\>\/src@; recipe nodes
+@cd@ into the same path.
 
-  1. 'CI.Nix.shipJustDrv' — push the @just@ derivation for the
-     remote's target platform to its Nix store.
-  2. @T=$(<runner> mktemp -d)@ — fresh remote tempdir.
-  3. @git bundle create -@ piped through @<runner>@ to materialise
-     the bundle on the remote, clone it, and check out the pinned
-     SHA.
-  4. @<runner> "cd ... && 'CI.Nix.realisedJust' "@ — realise the
-     drv on the remote (its substituter chain fetches the native
-     binary) and invoke @just --no-deps \<recipe\>@.
-  5. @<runner> "rm -rf $T"@ — cleanup, always runs (via @;@).
-  6. @exit $rc@ — propagate the build's exit code as the node's.
-
-Steps 1–4 are joined with @&&@ so a setup failure (failed import,
-failed clone, etc.) stops the chain early; @rc=$?@ captures that
-failure code. Step 5 uses @;@ to run unconditionally — cleanup
-must happen even when setup fails and @$T@ was never assigned (in
-that case @rm -rf ""@ is a no-op).
-
-The remote needs Nix installed (which it must, to run the recipes
-themselves) — @just@ specifically does *not* need to be on PATH.
+Across runs against the same SHA the directory persists, so
+re-runs (e.g. @--from ci-only@) skip the bundle+clone entirely.
+Garbage collection is the user's job — @rm -rf ~/.cache/ci@ when
+disk pressure warrants.
 -}
-remoteCommand :: Host -> Sha -> Platform -> RecipeName -> Text
-remoteCommand host sha targetPlat recipe =
-    T.intercalate " && " (shipJustDrv r targetPlat : setupSteps ++ [mainStep])
-        <> "; rc=$?; "
+cachedRunDir :: Sha -> Platform -> Text
+cachedRunDir sha targetPlat =
+    "$HOME/.cache/ci/" <> T.take 7 (display sha) <> "/" <> display targetPlat
+
+{- | Setup-node command. Ships the @just@ derivation, then bundles
+@HEAD@ across and clones into 'cachedRunDir'. Idempotent: if the
+target @src\/@ already exists (cache hit on same-SHA rerun), the
+incoming bundle bytes are discarded and the setup exits 0
+immediately.
+
+The bundle is always piped over the wire (we don't probe-then-ship
+because that'd add a round trip on every run). On a cache hit
+the wasted bandwidth is a few MB of bundle bytes discarded into
+@/dev/null@ on the remote — fine.
+-}
+setupCommand :: Host -> Sha -> Platform -> Text
+setupCommand host sha targetPlat =
+    shipJustDrv r targetPlat
+        <> " && git bundle create - --all 2>/dev/null | "
         <> r
-        <> " \"rm -rf $T\"; exit $rc"
+        <> " '"
+        <> remoteSetupShell sha targetPlat
+        <> "'"
   where
     r = remoteRunner host
-    setupSteps =
-        [ "T=$(" <> r <> " mktemp -d)"
-        , "git bundle create - --all 2>/dev/null | "
-            <> r
-            <> " \"cat > $T/repo.bundle && cd $T && git clone --quiet repo.bundle src && cd src && git -c advice.detachedHead=false checkout --quiet "
-            <> display sha
-            <> "\""
+
+{- | The remote-side shell snippet the setup node sends over ssh.
+Single-quoted on the way through so the local shell leaves @$DIR@
+and friends alone; the remote shell expands them. Cache-hit path
+short-circuits with @cat > /dev/null@ to consume the bundle bytes
+the local side is already piping.
+-}
+remoteSetupShell :: Sha -> Platform -> Text
+remoteSetupShell sha targetPlat =
+    T.intercalate "; " $
+        [ "set -e"
+        , "DIR=" <> cachedRunDir sha targetPlat
         ]
-    mainStep =
-        r <> " \"cd $T/src && " <> realisedJust targetPlat recipe <> "\""
+            <> [ "if [ -d \"$DIR/src\" ]; then cat > /dev/null; exit 0; fi"
+               , "mkdir -p \"$DIR\""
+               , "cd \"$DIR\""
+               , "cat > repo.bundle"
+               , "git clone --quiet repo.bundle src"
+               , "cd src"
+               , "git -c advice.detachedHead=false checkout --quiet " <> display sha
+               ]
+
+{- | Per-recipe remote command. The corresponding setup node has
+already provisioned the cached checkout (process-compose's
+@depends_on@ enforces ordering); the recipe just @cd@s into it
+and runs the realised @just@.
+-}
+recipeRemoteCommand :: Host -> Sha -> Platform -> RecipeName -> Text
+recipeRemoteCommand host sha targetPlat recipe =
+    r
+        <> " 'cd "
+        <> cachedRunDir sha targetPlat
+        <> "/src && "
+        <> realisedJust targetPlat recipe
+        <> "'"
+  where
+    r = remoteRunner host

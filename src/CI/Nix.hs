@@ -78,13 +78,13 @@ multi-output derivation (just has @out@, @man@, @doc@) so the
 expansion is exactly one store path, regardless of how many
 outputs the derivation declares.
 
-The leading @\\$@ is escaped so the @$()@ subshell is evaluated
-by the *remote* shell (after ssh argv substitution) rather than
-the local one.
+Intended to sit inside a *single-quoted* shell argument to ssh so
+the @$()@ subshell is evaluated by the remote shell rather than
+the local one — see 'CI.Transport.remoteShell'.
 -}
 realisedJust :: Platform -> RecipeName -> Text
 realisedJust targetPlat recipe =
-    "\\$(nix-store --realise "
+    "$(nix-store --realise "
         <> drv
         <> "!out)/bin/just --no-deps "
         <> display recipe
