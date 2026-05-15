@@ -29,7 +29,7 @@ where
 
 import CI.Git (Sha)
 import CI.Hosts (Host)
-import CI.Justfile (RecipeName, recipeCommand)
+import CI.Justfile (RecipeName, justBin, recipeCommand)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (display)
@@ -90,23 +90,39 @@ remoteRunner host
 
 {- | The full remote wrapper for one recipe execution. The shape:
 
-  1. @T=$(<runner> mktemp -d)@ — captures a fresh remote tempdir.
-  2. @git bundle create -@ piped through @<runner>@ to materialise
+  1. @nix-store --export $(...just-closure...) | <runner> nix-store
+     --import@ — push our local @just@ derivation (the absolute
+     @\/nix\/store\/...just@ baked in at compile time) into the
+     remote's Nix store. Idempotent: if the closure is already
+     there, @--import@ is a no-op. Pushing every run is simpler
+     than tracking whether we've done it.
+  2. @T=$(<runner> mktemp -d)@ — captures a fresh remote tempdir.
+  3. @git bundle create -@ piped through @<runner>@ to materialise
      the bundle on the remote, clone it, and check out the pinned
      SHA.
-  3. @<runner> "cd ... && just --no-deps <recipe>"@ — the actual
-     build. Its exit code is captured.
-  4. @<runner> "rm -rf $T"@ — cleanup, always runs.
-  5. @exit $rc@ — propagate the build's exit code as the node's.
+  4. @<runner> "cd ... && <absolute-just> --no-deps <recipe>"@ —
+     the actual build, invoked through the same absolute path the
+     local runner uses (so PATH on the remote is irrelevant). Its
+     exit code is captured.
+  5. @<runner> "rm -rf $T"@ — cleanup, always runs.
+  6. @exit $rc@ — propagate the build's exit code as the node's.
 
 @<runner>@ is 'remoteRunner': @ssh -T <host>@ for ordinary SSH
-targets, @pu connect <name>@ for incus addresses.
+targets, @pu connect <name>@ for incus addresses. Step 1 assumes
+the remote has Nix installed (which it must, to run the recipes
+themselves); the closure-export pipe is transport-agnostic and
+works the same way over both runners.
 -}
 sshCommand :: Host -> Sha -> RecipeName -> Text
 sshCommand host sha recipe =
     T.intercalate
         " && "
-        [ "T=$(" <> r <> " mktemp -d)"
+        [ "nix-store --export $(nix-store --query --requisites "
+            <> T.pack justBin
+            <> ") | "
+            <> r
+            <> " nix-store --import > /dev/null"
+        , "T=$(" <> r <> " mktemp -d)"
         , "git bundle create - --all 2>/dev/null | "
             <> r
             <> " \"cat > $T/repo.bundle && cd $T && git clone --quiet repo.bundle src && cd src && git -c advice.detachedHead=false checkout --quiet "
@@ -115,8 +131,8 @@ sshCommand host sha recipe =
         ]
         <> "; "
         <> r
-        <> " \"cd $T/src && just --no-deps "
-        <> display recipe
+        <> " \"cd $T/src && "
+        <> recipeCommand recipe
         <> "\"; rc=$?; "
         <> r
         <> " \"rm -rf $T\"; exit $rc"
