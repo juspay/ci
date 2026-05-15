@@ -26,7 +26,7 @@ import CI.Justfile (Attribute (..), Recipe (..), RecipeName, fetchDump)
 import qualified CI.Justfile as J
 import CI.LogPath (logDirFor, logPathFor, platformDir)
 import CI.Node (NodeId (..), parseNodeId)
-import CI.Platform (Platform, localPlatform, osToPlatforms, platformOs)
+import CI.Platform (Platform, localPlatform, platformOs)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
 import CI.Root (findRoot)
@@ -261,7 +261,7 @@ buildProcessCompose mode = do
                     <> unwords (show <$> rootOsFamilies rootRecipe)
         _ -> pure ()
     let nodeGraph = fanOut pipelinePlatforms recipeGraph
-        hasRemote = any (/= localPlat) pipelinePlatforms || any (\p -> isJust (lookupHost p hosts)) pipelinePlatforms
+        hasRemote = any (\p -> isJust (lookupHost p hosts)) pipelinePlatforms
     -- @DumpRun@ skips @resolveSha@ and the SSH branch falls back to
     -- 'shaPlaceholder' so @dump-yaml@ works outside a git checkout.
     remoteLaneState <- case mode of

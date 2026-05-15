@@ -22,7 +22,6 @@ module CI.Hosts (
     Host,
     hostFromText,
     Hosts,
-    hostsPath,
     loadHosts,
     lookupHost,
     hostsPlatforms,
