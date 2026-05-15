@@ -43,12 +43,7 @@ spec = do
         let host = hostFromText "remote.example.com"
             sha = shaPlaceholder
             recipe = "ci::build"
-            -- Same-platform pair: sshTransport classifies as NativeArch
-            -- at construction; commandFor emits the closure-copy +
-            -- absolute-path shape.
             native = commandFor (sshTransport host sha Linux Linux) recipe
-            -- Cross-platform pair: sshTransport classifies as ForeignArch
-            -- at construction; commandFor skips the closure-copy step.
             foreign_ = commandFor (sshTransport host sha Linux Macos) recipe
 
         it "same-platform target prepends a `nix-store --export | runner nix-store --import` step" $
