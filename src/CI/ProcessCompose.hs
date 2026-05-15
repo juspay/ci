@@ -198,4 +198,3 @@ runProcessCompose up pc =
       waitForProcess ph
   where
     cp = (proc processComposeBin (toUpArgs up)) {std_in = CreatePipe}
-

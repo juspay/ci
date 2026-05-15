@@ -52,7 +52,7 @@ reachableSubgraph root g
     recipeGraph =
       G.stars
         [ (name, [d.recipe | d <- r.dependencies])
-          | (name, r) <- Map.toList g
+        | (name, r) <- Map.toList g
         ]
     keep = Set.fromList $ G.reachable recipeGraph root
 

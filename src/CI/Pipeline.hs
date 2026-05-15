@@ -16,7 +16,6 @@ module CI.Pipeline
 where
 
 import CI.CommitStatus (postStatusFor, seedPending)
-import CI.Root (findRoot)
 import CI.Gh (viewRepo)
 import CI.Git (ensureCleanTree, resolveSha, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
@@ -24,6 +23,7 @@ import CI.Justfile (fetchDump, recipeCommand)
 import CI.LogPath (logDirFor, logPathFor)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState, subscribeStates)
+import CI.Root (findRoot)
 import CI.Verdict (exitWithVerdict, newOutcomes, recordOutcome)
 import Control.Concurrent.Async (link, wait, withAsync)
 import Control.Monad (void)
@@ -70,7 +70,8 @@ runLocal dirs passthrough = do
   pc <- buildProcessCompose LocalRun
   outcomes <- newOutcomes (processNames pc)
   withObserver dirs.sock (recordOutcome outcomes) $
-    void $ runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
+    void $
+      runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
   exitWithVerdict outcomes
 
 -- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
@@ -112,7 +113,8 @@ runStrict dirs passthrough = do
     outcomes <- newOutcomes recipes
     let onState ps = postStatusFor repo sha logDir ps >> recordOutcome outcomes ps
     withObserver dirs.sock onState $
-      void $ runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
+      void $
+        runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
     exitWithVerdict outcomes
 
 -- | Bracket @body@ between a 'subscribeStates' subscription on @sock@
