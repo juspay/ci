@@ -37,31 +37,17 @@ import qualified Data.Text as T
 import Data.Text.Display (display)
 import Language.Haskell.TH.Env (envQ')
 
--- | @/nix/store/...drv@ for @just@ on @x86_64-linux@, baked in.
-justDrvX86_64Linux :: FilePath
-justDrvX86_64Linux = $$(envQ' "CI_JUST_DRV_X86_64_LINUX")
-
--- | @/nix/store/...drv@ for @just@ on @aarch64-linux@, baked in.
-justDrvAarch64Linux :: FilePath
-justDrvAarch64Linux = $$(envQ' "CI_JUST_DRV_AARCH64_LINUX")
-
--- | @/nix/store/...drv@ for @just@ on @x86_64-darwin@, baked in.
-justDrvX86_64Darwin :: FilePath
-justDrvX86_64Darwin = $$(envQ' "CI_JUST_DRV_X86_64_DARWIN")
-
--- | @/nix/store/...drv@ for @just@ on @aarch64-darwin@, baked in.
-justDrvAarch64Darwin :: FilePath
-justDrvAarch64Darwin = $$(envQ' "CI_JUST_DRV_AARCH64_DARWIN")
-
 {- | Drv path for @just@ on the given target platform — the recipe
 shipped to that remote, realised on-site to produce a natively
-executable binary regardless of the runner's own arch.
+executable binary regardless of the runner's own arch. The splice
+per branch is baked in from the @CI_JUST_DRV_\<system\>@ env vars
+the flake injects (see module-level doc).
 -}
 justDrvFor :: Platform -> FilePath
-justDrvFor X86_64Linux = justDrvX86_64Linux
-justDrvFor Aarch64Linux = justDrvAarch64Linux
-justDrvFor X86_64Darwin = justDrvX86_64Darwin
-justDrvFor Aarch64Darwin = justDrvAarch64Darwin
+justDrvFor X86_64Linux = $$(envQ' "CI_JUST_DRV_X86_64_LINUX")
+justDrvFor Aarch64Linux = $$(envQ' "CI_JUST_DRV_AARCH64_LINUX")
+justDrvFor X86_64Darwin = $$(envQ' "CI_JUST_DRV_X86_64_DARWIN")
+justDrvFor Aarch64Darwin = $$(envQ' "CI_JUST_DRV_AARCH64_DARWIN")
 
 {- | Shell snippet that copies the @just@ derivation for the given
 target platform to a remote, via the runner-command prefix (e.g.
