@@ -70,7 +70,7 @@ Every emitted process is `restart: no` and `exit_on_skipped: false`, so one fail
 
 ## Subcommands
 
-- `ci run [-- <args>]` (default): drive the pipeline; anything after `--` is forwarded verbatim to `process-compose up`.
+- `ci run [--tui] [-- <args>]` (default): drive the pipeline; anything after `--` is forwarded verbatim to `process-compose up`. `--tui` swaps process-compose's headless logger for its interactive tcell view — useful for poking at long-running pipelines locally.
 - `ci dump-yaml`: emit the assembled YAML to stdout for inspection. Runs in a side-effect-free mode — no host prompts, no `git rev-parse` shell-out — so it works offline, on a remote VM with no TTY, and outside a git checkout. Unresolved hosts render as `<unconfigured>` and the SSH `checkout` carries a `0000000-dump-yaml-placeholder` token; the YAML's *structure* (process keys, depends_on edges) still reflects the real fanout.
 
 ## Roadmap

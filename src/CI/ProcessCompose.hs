@@ -33,9 +33,8 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Yaml as Y
 import GHC.Generics (Generic)
-import System.Exit (ExitCode, die)
-import System.IO (hClose)
-import System.Process (CreateProcess (..), StdStream (..), proc, waitForProcess, withCreateProcess)
+import System.Exit (ExitCode)
+import System.Process (proc, waitForProcess, withCreateProcess)
 import System.Which (staticWhich)
 
 {- | Absolute path to the @process-compose@ binary, baked in at compile time
@@ -175,15 +174,24 @@ processNames :: ProcessCompose -> [NodeId]
 processNames (ProcessCompose ps) = Map.keys ps
 
 {- | All inputs that shape a @process-compose up@ invocation. The YAML
-config itself goes on stdin separately (it's typically too big for an
-argv); everything else flag-shaped lives here. Process-compose always
-binds its API to a UDS at @sockPath@ — that's both the
-'CI.ProcessCompose.Events.subscribeStates' attachment point and the
-de-facto mutex for "is a ci run in progress in this checkout."
+config is materialised to @yamlPath@ before the spawn (rather than
+piped through stdin) so process-compose's TUI mode — which needs the
+parent's tty on stdin for keyboard input — works as a drop-in toggle.
+Process-compose always binds its API to a UDS at @sockPath@ — that's
+both the 'CI.ProcessCompose.Events.subscribeStates' attachment point
+and the de-facto mutex for "is a ci run in progress in this checkout."
 -}
 data UpInvocation = UpInvocation
     { sockPath :: FilePath
     , logFile :: FilePath
+    , yamlPath :: FilePath
+    -- ^ Where to write the YAML before spawning pc. Passed via @-f@.
+    , tui :: Bool
+    {- ^ Drive process-compose's TUI (@-t=true@) instead of headless
+    (@-t=false@). Only meaningful in 'CI.Pipeline.runLocal'; CI
+    mode normally wants headless, but the flag itself is mode-
+    agnostic at this layer.
+    -}
     , passthroughArgs :: [String]
     {- ^ Caller-supplied args appended verbatim after the canned
     baseline; the @ci run -- ...@ passthrough lands here.
@@ -191,26 +199,25 @@ data UpInvocation = UpInvocation
     }
 
 {- | Translate an 'UpInvocation' into the argv vector for @process-compose@.
-The YAML config is read from stdin (@-f /dev/stdin@) so it's not part of
-the args. TUI is disabled (@-t=false@) unconditionally — there is only
-one caller ('runProcessCompose') and it never wants TUI.
+The YAML config is read from @yamlPath@ via @-f@. @-t=true@ enables the
+TUI, @-t=false@ keeps it headless; the flag is always emitted explicitly
+so the chosen mode is visible at the call site.
 -}
 toUpArgs :: UpInvocation -> [String]
 toUpArgs up =
-    ["up", "-f", "/dev/stdin", "-t=false", "-L", up.logFile, "-U", "-u", up.sockPath] <> up.passthroughArgs
+    ["up", "-f", up.yamlPath, tFlag, "-L", up.logFile, "-U", "-u", up.sockPath] <> up.passthroughArgs
+  where
+    tFlag = if up.tui then "-t=true" else "-t=false"
 
-{- | Spawn @process-compose up@ from the 'UpInvocation', encode the
-'ProcessCompose' as YAML on stdin, and forward the subprocess's exit
-code. 'withCreateProcess' brackets the spawn so stdin is closed and the
-child reaped even if 'BS.hPut' throws (e.g. broken pipe).
+{- | Spawn @process-compose up@ from the 'UpInvocation'. The YAML is
+materialised at 'yamlPath' first (overwriting any prior content); the
+subprocess then reads it via @-f@. Stdin/stdout/stderr inherit from
+the parent so TUI mode (when enabled) has the user's tty for input
+and headless mode still shows pc's own progress lines.
 -}
 runProcessCompose :: UpInvocation -> ProcessCompose -> IO ExitCode
-runProcessCompose up pc =
-    withCreateProcess cp $ \mhin _ _ ph -> case mhin of
-        Nothing -> die "process-compose: stdin pipe was not created"
-        Just hin -> do
-            BS.hPut hin (Y.encode pc)
-            hClose hin
-            waitForProcess ph
+runProcessCompose up pc = do
+    BS.writeFile up.yamlPath (Y.encode pc)
+    withCreateProcess cp $ \_ _ _ ph -> waitForProcess ph
   where
-    cp = (proc processComposeBin (toUpArgs up)){std_in = CreatePipe}
+    cp = proc processComposeBin (toUpArgs up)

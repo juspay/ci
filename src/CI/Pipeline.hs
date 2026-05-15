@@ -52,6 +52,7 @@ data RunDir = RunDir
     { worktreePath :: FilePath
     , sock :: FilePath
     , pcLog :: FilePath
+    , pcYaml :: FilePath
     }
 
 {- | Create @\$PWD\/.ci\/@ (if missing) and return the canonical sub-paths.
@@ -68,6 +69,7 @@ ensureRunDir = do
             { worktreePath = dir </> "worktree"
             , sock = dir </> "pc.sock"
             , pcLog = dir </> "pc.log"
+            , pcYaml = dir </> "pc.yaml"
             }
 
 {- | Local mode: live working tree, no GitHub status posts, no per-recipe
@@ -85,14 +87,14 @@ bundles @HEAD@ across rather than the dirty live tree. The dev's
 uncommitted work is intentionally invisible to remote lanes — the
 bundle reflects committed history only.
 -}
-runLocal :: RunDir -> [String] -> IO ()
-runLocal dirs passthrough = do
+runLocal :: RunDir -> Bool -> [String] -> IO ()
+runLocal dirs tui passthrough = do
     pc <- buildProcessCompose LocalRun
     outcomes <- newOutcomes (processNames pc)
     let onState ps = withParsedNode ps $ \node -> recordOutcome outcomes node ps
     withObserver dirs.sock onState $
         void $
-            runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
+            runProcessCompose (UpInvocation dirs.sock dirs.pcLog dirs.pcYaml tui passthrough) pc
     exitWithVerdict outcomes
 
 {- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
@@ -122,8 +124,8 @@ outcome (a failed node leaves pc exiting 0). The accumulated
 outcome map is the source of truth; 'exitWithVerdict' derives the
 final 'ExitCode' from it.
 -}
-runStrict :: RunDir -> [String] -> IO ()
-runStrict dirs passthrough = do
+runStrict :: RunDir -> Bool -> [String] -> IO ()
+runStrict dirs tui passthrough = do
     dieOnLeft =<< ensureCleanTree
     repo <- dieOnLeft =<< viewRepo
     sha <- dieOnLeft =<< resolveSha
@@ -139,7 +141,7 @@ runStrict dirs passthrough = do
                     >> recordOutcome outcomes node ps
         withObserver dirs.sock onState $
             void $
-                runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
+                runProcessCompose (UpInvocation dirs.sock dirs.pcLog dirs.pcYaml tui passthrough) pc
         exitWithVerdict outcomes
 
 {- | Materialise every @.ci\/\<sha\>\/\<platform\>\/@ subdirectory the

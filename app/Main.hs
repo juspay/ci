@@ -1,3 +1,4 @@
+{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 {- | Argv parsing + dispatch to 'CI.Pipeline'. Two subcommands:
@@ -17,32 +18,37 @@ import Options.Applicative (
     ParserInfo,
     execParser,
     fullDesc,
+    help,
     helper,
     info,
+    long,
     metavar,
     progDesc,
     strArgument,
     subparser,
+    switch,
     (<**>),
  )
 import qualified Options.Applicative as O (command)
 import System.Environment (lookupEnv)
 
--- | Parsed argv. 'Run' carries the passthrough args after @--@.
+{- | Parsed argv. 'Run' carries the TUI toggle plus any @-- ...@
+passthrough args; 'DumpYaml' has no options of its own.
+-}
 data Command
-    = Run [String]
+    = Run {tui :: Bool, passthrough :: [String]}
     | DumpYaml
 
 main :: IO ()
 main = do
     cmd <- execParser parserInfo
     case cmd of
-        Run passthrough -> do
+        Run{tui, passthrough} -> do
             dirs <- ensureRunDir
             strict <- (== Just "true") <$> lookupEnv "CI"
             if strict
-                then runStrict dirs passthrough
-                else runLocal dirs passthrough
+                then runStrict dirs tui passthrough
+                else runLocal dirs tui passthrough
         DumpYaml -> do
             pc <- buildProcessCompose DumpRun
             BS.putStr (Y.encode pc)
@@ -56,7 +62,13 @@ parserInfo =
 commandParser :: Parser Command
 commandParser =
     subparser
-        ( O.command "run" (info (Run <$> many (strArgument (metavar "-- ARGS..."))) (progDesc "Execute the CI pipeline via process-compose (default). Args after -- are passed through."))
+        ( O.command "run" (info runParser (progDesc "Execute the CI pipeline via process-compose (default). Args after -- are passed through."))
             <> O.command "dump-yaml" (info (pure DumpYaml) (progDesc "Print the process-compose YAML to stdout"))
         )
-        <|> pure (Run [])
+        <|> runParser
+
+runParser :: Parser Command
+runParser =
+    Run
+        <$> switch (long "tui" <> help "Drive process-compose's TUI (interactive view) instead of its headless logger.")
+        <*> many (strArgument (metavar "-- ARGS..."))
