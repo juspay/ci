@@ -65,6 +65,7 @@ test-suite ci-test
                       CI.NodeSpec
                       CI.PlatformSpec
                       CI.ProcessComposeSpec
+                      CI.TransportSpec
                       CI.VerdictSpec
     build-depends:
         , algebraic-graphs

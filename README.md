@@ -49,6 +49,19 @@ In local mode (`CI` unset) a missing entry is prompted for and persisted. In str
 
 The remote host needs `just`, `git`, and any tools the recipes themselves use available on its PATH; no agent is installed, only the shell command stream.
 
+#### Incus / `pu connect` runners
+
+Hosts spelled as `pu connect <name>` in the config are routed through the `pu` incus client instead of `ssh`. The remote-command shape is identical (the prefix already names the runner+target), so a host configured as `"macos": "pu connect mac-vm"` Just Works as a drop-in:
+
+```json
+{
+  "linux": "builder.example.com",
+  "macos": "pu connect mac-vm"
+}
+```
+
+Detection is by exact `pu connect ` prefix — anything else falls through to `ssh -T <host>`.
+
 ### Cross-lane failure tolerance
 
 Every emitted process is `restart: no` and `exit_on_skipped: false`, so one failing node leaves sibling lanes free to keep running and skipped dependents don't tear the project down. Process-compose's own exit code is therefore not authoritative — a failed node leaves pc exiting 0 — and the verdict step that consults the outcome map is what surfaces the failure.
@@ -56,7 +69,7 @@ Every emitted process is `restart: no` and `exit_on_skipped: false`, so one fail
 ## Subcommands
 
 - `ci run [-- <args>]` (default): drive the pipeline; anything after `--` is forwarded verbatim to `process-compose up`.
-- `ci dump-yaml`: emit the assembled YAML to stdout for inspection.
+- `ci dump-yaml`: emit the assembled YAML to stdout for inspection. Runs in a side-effect-free mode — no host prompts, no `git rev-parse` shell-out — so it works offline, on a remote VM with no TTY, and outside a git checkout. Unresolved hosts render as `<unconfigured>` and the SSH `checkout` carries a `0000000-dump-yaml-placeholder` token; the YAML's *structure* (process keys, depends_on edges) still reflects the real fanout.
 
 ## Roadmap
 

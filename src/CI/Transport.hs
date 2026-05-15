@@ -2,21 +2,28 @@
 
 {- | How a 'CI.Node.NodeId' actually executes: locally against the
 pipeline's pinned worktree, or remotely against a snapshotted
-@git bundle@ on an SSH 'CI.Hosts.Host'. The split lives here so
-the only module that knows about ssh + bundle command shapes is
-this one — every other consumer ('CI.Pipeline', 'CI.Verdict', etc.)
-sees only the typed value plus the 'commandFor' rendering.
+@git bundle@ uploaded over a SSH-shaped runner. The split lives
+here so the only module that knows about runner + bundle command
+shapes is this one — every other consumer ('CI.Pipeline',
+'CI.Verdict', etc.) sees only the typed value plus the 'commandFor'
+rendering.
 
-The SSH command shape mirrors kolu's reference: three SSH
-connections per node — @mktemp@ to provision a remote tempdir,
-a bundle-piped clone+checkout, and the @just --no-deps@ invocation
-— with a final cleanup that respects the exit code of the build
+The remote command shape mirrors kolu's reference: three runner
+invocations per node — @mktemp@ to provision a remote tempdir, a
+bundle-piped clone+checkout, and the @just --no-deps@ invocation —
+with a final cleanup that respects the exit code of the build
 itself. Three round trips is wasteful but simple; an upload-once
 setup phase is a future optimisation.
+
+The runner is selected from the 'Host' string: a bare @hostname@ (or
+@user\@hostname@) uses @ssh -T@; a literal @pu connect \<name\>@
+prefix uses the @pu@ incus client verbatim instead. See
+'remoteRunner'.
 -}
 module CI.Transport (
     Transport (..),
     commandFor,
+    remoteRunner,
 )
 where
 
@@ -39,48 +46,79 @@ it's only meaningful on the SSH path — a local node runs against
 the worktree pc has already @chdir@'d into, so the @HEAD@ SHA is
 redundant. Keeping the dependency local to the constructor it
 needs avoids a parallel @Maybe Sha@ threaded through every caller.
+
+Despite the name, @Ssh@ also covers incus-style runners spelled as
+@pu connect \<name\>@ in @hosts.json@ — the constructor names the
+*kind* of execution (remote, SSH-shaped command-prefix), not the
+literal binary. See 'remoteRunner'.
 -}
 data Transport = Local | Ssh Host Sha
 
 {- | The shell command process-compose runs for one node. Local
 nodes use the same @just --no-deps@ invocation as before
-(preserved verbatim from 'CI.Justfile.recipeCommand'); SSH nodes
-emit the three-connection bundle+clone+run dance.
+(preserved verbatim from 'CI.Justfile.recipeCommand'); remote
+nodes emit the three-call bundle+clone+run dance against
+'remoteRunner'.
 -}
 commandFor :: Transport -> RecipeName -> Text
 commandFor Local r = recipeCommand r
 commandFor (Ssh host sha) r = sshCommand host sha r
 
-{- | The full SSH wrapper for one remote recipe execution. The shape:
+{- | The shell-tokens prefix that runs a command on this 'Host'.
+Two flavours:
 
-  1. @T=$(ssh HOST mktemp -d)@ — captures a fresh remote tempdir.
-  2. @git bundle create -@ piped through SSH to materialise the
-     bundle on the remote, clone it, and check out the pinned SHA.
-  3. @ssh HOST "cd ... && just --no-deps <recipe>"@ — the actual
+  * @ssh -T \<host\>@ — the default. @-T@ suppresses TTY allocation
+    so binary stdin (the @git bundle@ stream) survives unmolested.
+
+  * @pu connect \<name\>@ — used verbatim when the host string
+    starts with that literal prefix. The @pu@ incus client accepts
+    the same "command-prefix + quoted argv" shape as @ssh@, so a
+    host configured as @"pu connect builder-mac"@ in
+    @~\/.config\/ci\/hosts.json@ Just Works as a drop-in.
+
+The detection is by exact prefix because the alternative
+("anything with spaces in it") is too permissive — @user\@host@
+forms with embedded options like @"-p 2222 builder"@ are
+plausible future SSH variants and shouldn't be misclassified.
+-}
+remoteRunner :: Host -> Text
+remoteRunner host
+    | "pu connect " `T.isPrefixOf` h = h
+    | otherwise = "ssh -T " <> h
+  where
+    h = display host
+
+{- | The full remote wrapper for one recipe execution. The shape:
+
+  1. @T=$(<runner> mktemp -d)@ — captures a fresh remote tempdir.
+  2. @git bundle create -@ piped through @<runner>@ to materialise
+     the bundle on the remote, clone it, and check out the pinned
+     SHA.
+  3. @<runner> "cd ... && just --no-deps <recipe>"@ — the actual
      build. Its exit code is captured.
-  4. @ssh HOST "rm -rf $T"@ — cleanup, always runs.
+  4. @<runner> "rm -rf $T"@ — cleanup, always runs.
   5. @exit $rc@ — propagate the build's exit code as the node's.
 
-@-T@ on every SSH suppresses TTY allocation so binary stdin (the
-bundle) survives unmolested.
+@<runner>@ is 'remoteRunner': @ssh -T <host>@ for ordinary SSH
+targets, @pu connect <name>@ for incus addresses.
 -}
 sshCommand :: Host -> Sha -> RecipeName -> Text
 sshCommand host sha recipe =
     T.intercalate
         " && "
-        [ "T=$(ssh -T " <> h <> " mktemp -d)"
-        , "git bundle create - --all 2>/dev/null | ssh -T "
-            <> h
+        [ "T=$(" <> r <> " mktemp -d)"
+        , "git bundle create - --all 2>/dev/null | "
+            <> r
             <> " \"cat > $T/repo.bundle && cd $T && git clone --quiet repo.bundle src && cd src && git -c advice.detachedHead=false checkout --quiet "
             <> display sha
             <> "\""
         ]
-        <> "; ssh -T "
-        <> h
+        <> "; "
+        <> r
         <> " \"cd $T/src && just --no-deps "
         <> display recipe
-        <> "\"; rc=$?; ssh -T "
-        <> h
+        <> "\"; rc=$?; "
+        <> r
         <> " \"rm -rf $T\"; exit $rc"
   where
-    h = display host
+    r = remoteRunner host
