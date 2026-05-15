@@ -45,7 +45,9 @@ Hosts are configured in `~/.config/ci/hosts.json`, keyed by platform:
 }
 ```
 
-In local mode (`CI` unset) a missing entry is prompted for and persisted. In strict mode (`CI=true`) the runner refuses to start if any remote platform is unconfigured — there's no TTY mid-run, so the prompt would deadlock the pipeline. Edit the file (or run once locally) before triggering strict-mode CI on a multi-platform root.
+In local mode (`CI` unset) a missing entry for a non-local platform is prompted for and persisted. In strict mode (`CI=true`) the runner refuses to start if any non-local platform is unconfigured — there's no TTY mid-run, so the prompt would deadlock the pipeline. Edit the file (or run once locally) before triggering strict-mode CI on a multi-platform root.
+
+**Local platform override.** An entry for the *local* platform takes precedence over inline execution: configure `"linux": "pu connect srid1"` from a linux host and the linux lane routes through `pu` instead of running in the worktree. This is the path for exercising remote runners (or testing failure modes) without leaving the local box.
 
 The remote host needs `just`, `git`, and any tools the recipes themselves use available on its PATH; no agent is installed, only the shell command stream.
 

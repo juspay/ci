@@ -36,7 +36,7 @@ import Control.Monad (foldM, void)
 import Data.Foldable (for_)
 import Data.List (nub)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (fromMaybe, isNothing)
+import Data.Maybe (isJust, isNothing)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
@@ -234,8 +234,13 @@ buildProcessCompose mode = do
     localPlat <- dieOnLeft localPlatform
     let pipelinePlatforms = pipelinePlatformsFor rootRecipe localPlat
         nodeGraph = fanOut pipelinePlatforms recipeGraph
-        hasRemote = any (/= localPlat) pipelinePlatforms
     hosts <- resolveHostsFor mode localPlat pipelinePlatforms
+    -- A platform with an entry in @hosts.json@ runs through that runner
+    -- (ssh or pu) — even when it matches the local platform. The
+    -- hosts-file is the override: presence wins over the local default.
+    -- 'hasRemote' therefore depends on the *loaded* hosts map, not just
+    -- the pipeline's platform set.
+    let hasRemote = any (\p -> isJust (lookupHost p hosts)) pipelinePlatforms
     -- Only the SSH branch in 'CI.Transport.commandFor' needs a SHA, so
     -- we shell out to git only when at least one lane is remote. In
     -- 'DumpRun' we go further: skip 'resolveSha' even when remote lanes
@@ -328,38 +333,50 @@ case; 'RemoteLanes' carries the SHA every SSH lane needs to clone.
 -}
 data RemoteLaneState = NoRemoteLanes | RemoteLanes Sha
 
-{- | Per-node command construction: 'Local' if the node's platform
-matches the runner; otherwise 'Ssh' against the resolved host.
+{- | Per-node command construction.
 
-For 'LocalRun'/'StrictRun': the two error branches witness the
-fan-out invariants — 'resolveHostsFor' ensures every remote
-platform has a host, and 'buildProcessCompose' produces
-'RemoteLanes' iff a remote lane exists. A remote 'NodeId' with
-'NoRemoteLanes' would be a 'fanOut' bug — the caller shouldn't be
-able to build that state, so we 'error' rather than carry a
-defensive 'Maybe' through the type.
+Selection rule, in order:
 
-For 'DumpRun': missing-host is *expected* (it's the whole reason
-DumpRun exists), so the SSH command renders against a placeholder
-'Host'. The YAML still reflects the real fanout shape — process
-keys, depends_on edges — only the @command@ string is unusable.
+  1. If the node's platform has an entry in @hosts.json@, route
+     through that runner — even when the platform matches the
+     local host. The hosts-file is an *override*; presence wins.
+     This is what lets a linux runner exercise its own linux lane
+     via, say, @pu connect srid1@ for incus-cluster CI testing.
+
+  2. Otherwise, if the node's platform matches the local host,
+     run inline against the worktree pc has already @chdir@'d into.
+
+  3. Otherwise (non-local platform with no host), fail. In
+     'LocalRun'/'StrictRun' this is unreachable — 'resolveHostsFor'
+     prompts or dies for any missing non-local entry before we
+     reach this function. In 'DumpRun' it's expected (the whole
+     reason 'DumpRun' exists), and the SSH command renders against
+     a visible placeholder so the YAML's structural keys still
+     reflect the real fanout.
 -}
 commandForNode :: RunMode -> RemoteLaneState -> Platform -> Hosts -> NodeId -> T.Text
-commandForNode mode remoteLaneState localPlat hosts node
-    | node.platform == localPlat = commandFor Local node.recipe
-    | DumpRun <- mode =
-        -- Best-effort: known host renders against it, unknown against
-        -- a visible placeholder. SHA is always 'shaPlaceholder' because
-        -- 'buildProcessCompose' skips 'resolveSha' in 'DumpRun'.
-        let h = fromMaybe (hostFromText "<unconfigured>") (lookupHost node.platform hosts)
-         in commandFor (Ssh h shaPlaceholder) node.recipe
-    | otherwise = case (lookupHost node.platform hosts, remoteLaneState) of
-        (Just h, RemoteLanes sha) -> commandFor (Ssh h sha) node.recipe
-        _ ->
-            error $
-                "internal error: no SSH host or SHA for "
-                    <> T.unpack (display node.platform)
-                    <> " (resolveHostsFor + buildProcessCompose should have caught this)"
+commandForNode mode remoteLaneState localPlat hosts node = case lookupHost node.platform hosts of
+    Just h -> case remoteLaneState of
+        RemoteLanes sha -> commandFor (Ssh h sha) node.recipe
+        NoRemoteLanes
+            | DumpRun <- mode -> commandFor (Ssh h shaPlaceholder) node.recipe
+            | otherwise -> shaContractError
+    Nothing
+        | node.platform == localPlat -> commandFor Local node.recipe
+        | DumpRun <- mode ->
+            commandFor (Ssh (hostFromText "<unconfigured>") shaPlaceholder) node.recipe
+        | otherwise -> hostContractError
+  where
+    hostContractError =
+        error $
+            "internal error: no SSH host for "
+                <> T.unpack (display node.platform)
+                <> " (resolveHostsFor should have caught this)"
+    shaContractError =
+        error $
+            "internal error: hosts entry for "
+                <> T.unpack (display node.platform)
+                <> " but no SHA resolved (buildProcessCompose hasRemote logic broken)"
 
 {- | The single 'die' site in the project: every recoverable failure
 mode threads up through @Either e a@ to this boundary, where the
