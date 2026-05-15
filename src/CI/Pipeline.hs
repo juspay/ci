@@ -23,6 +23,7 @@ import CI.Git (Sha, ensureCleanTree, resolveSha, shaPlaceholder, withSnapshotWor
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Hosts (Hosts, hostsPlatforms, loadHosts, lookupHost)
 import CI.Justfile (Attribute (..), Recipe (..), RecipeName, fetchDump)
+import qualified CI.Justfile as J
 import CI.LogPath (logDirFor, logPathFor, platformDir)
 import CI.Node (NodeId (..), parseNodeId)
 import CI.Platform (Platform, localPlatform, osToPlatforms, platformOs)
@@ -250,7 +251,16 @@ buildProcessCompose mode = do
     localPlat <- dieOnLeft localPlatform
     hosts <- loadHosts
     let pipelinePlatforms = pipelinePlatformsFor rootRecipe localPlat hosts
-        nodeGraph = fanOut pipelinePlatforms recipeGraph
+    case pipelinePlatforms of
+        [] ->
+            die $
+                "root recipe declares OS attrs but no matching system is configured. "
+                    <> "Either remove the OS attrs from "
+                    <> T.unpack (display rootName)
+                    <> " or add an entry to ~/.config/ci/hosts.json for one of: "
+                    <> unwords (show <$> rootOsFamilies rootRecipe)
+        _ -> pure ()
+    let nodeGraph = fanOut pipelinePlatforms recipeGraph
         hasRemote = any (/= localPlat) pipelinePlatforms || any (\p -> isJust (lookupHost p hosts)) pipelinePlatforms
     -- @DumpRun@ skips @resolveSha@ and the SSH branch falls back to
     -- 'shaPlaceholder' so @dump-yaml@ works outside a git checkout.
@@ -282,11 +292,19 @@ the user opts in by adding an entry to @hosts.json@.
 -}
 pipelinePlatformsFor :: Recipe -> Platform -> Hosts -> [Platform]
 pipelinePlatformsFor root localPlat hosts =
-    let rootOsFamilies = [o | Os o <- root.attributes]
-        configured = nub (localPlat : hostsPlatforms hosts)
-     in if null rootOsFamilies
-            then [localPlat]
-            else filter (\p -> platformOs p `elem` rootOsFamilies) configured
+    let configured = nub (localPlat : hostsPlatforms hosts)
+     in case rootOsFamilies root of
+            [] -> [localPlat]
+            oss -> filter (\p -> platformOs p `elem` oss) configured
+
+{- | The OS-family attributes declared on a recipe ('[linux]',
+'[macos]', etc.), as a plain list. Used both by
+'pipelinePlatformsFor' (to compute the fanout set) and by the
+empty-fanout error in 'buildProcessCompose' (to tell the user
+which families couldn't be satisfied).
+-}
+rootOsFamilies :: Recipe -> [J.Os]
+rootOsFamilies r = [o | Os o <- r.attributes]
 
 {- | Cross-product the recipe DAG with the pipeline's platform set: one
 'NodeId' per @(recipe, platform)@, edges replicated lane-by-lane
