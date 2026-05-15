@@ -250,11 +250,11 @@ buildProcessCompose mode = do
     -- That keeps @dump-yaml@ working outside a git checkout in both
     -- single- and multi-platform pipelines.
     remoteLaneState <- case mode of
-        DumpRun -> pure NoRemoteLanes
+        DumpRun -> pure DumpPlaceholder
         _
             | hasRemote -> RemoteLanes <$> (dieOnLeft =<< resolveSha)
             | otherwise -> pure NoRemoteLanes
-    let mkCommand = commandForNode mode remoteLaneState localPlat hosts
+    let mkCommand = commandForNode remoteLaneState localPlat hosts
     pure $ toProcessCompose (workingDir mode) mkCommand (logLocation mode) nodeGraph
   where
     workingDir LocalRun = Nothing
@@ -320,20 +320,37 @@ resolveHostsFor mode localPlat platforms = do
   where
     addInteractively hs p = snd <$> promptAndPersistHost p hs
 
-{- | Orchestrator-side branching state: does the pipeline contain any
-remote lane, and if so what SHA do those lanes clone? Named after
-the orchestrator's decision (remote-lane presence), not after the
-downstream 'CI.Transport' module that ultimately consumes the SHA —
-the 'CI.Transport.Ssh' constructor is where SHA-as-parameter lives;
-this type is where the "do we even need one?" decision lives.
+{- | Orchestrator-side branching state: what SHA (if any) does each
+SSH lane clone, and is contract violation acceptable in this run?
+Named after the orchestrator's decision (remote-lane presence and
+inspection-vs-real semantics), not after the downstream
+'CI.Transport' module that ultimately consumes the SHA.
 
-Modelling it as a sum rather than a 'Maybe Sha' + 'hasRemote' 'Bool'
-kills the previously-unreachable @(SSH lane, Nothing)@ branch: the
-type now witnesses that "we have remote lanes" and "we have a SHA"
-are the same fact. 'NoRemoteLanes' is the @dump-yaml@-outside-a-repo
-case; 'RemoteLanes' carries the SHA every SSH lane needs to clone.
+Three states, three semantics:
+
+ * 'DumpPlaceholder' — inspection mode ('DumpRun'). Side-effect-free:
+   no @resolveSha@, no @hosts.json@ writes. Every SSH lane renders
+   with 'shaPlaceholder' and tolerates missing host entries (the
+   command renders against a visible @\<unconfigured\>@ placeholder
+   host). This is the state @dump-yaml@ runs in — even outside a
+   git checkout, even on a runner with no hosts.json.
+
+ * 'NoRemoteLanes' — real run with no remote work. Every lane runs
+   inline through 'Local' transport; reaching the SSH branch from
+   this state is a contract violation (caught by 'shaContractError').
+
+ * 'RemoteLanes' — real run with at least one SSH lane. Carries the
+   SHA every SSH lane will clone.
+
+The 'DumpPlaceholder' constructor folds the "is this inspection
+mode?" fact into the type 'commandForNode' already consumes, so
+'commandForNode' no longer needs a 'RunMode' parameter: pattern
+matching on 'DumpPlaceholder' captures the same disambiguation
+the previous @DumpRun \<- mode@ guards expressed, but as a
+type-level invariant rather than a hand-maintained convention
+between 'buildProcessCompose' and 'commandForNode'.
 -}
-data RemoteLaneState = NoRemoteLanes | RemoteLanes Sha
+data RemoteLaneState = DumpPlaceholder | NoRemoteLanes | RemoteLanes Sha
 
 {- | Per-node command construction.
 
@@ -356,16 +373,15 @@ Selection rule, in order:
      a visible placeholder so the YAML's structural keys still
      reflect the real fanout.
 -}
-commandForNode :: RunMode -> RemoteLaneState -> Platform -> Hosts -> NodeId -> T.Text
-commandForNode mode remoteLaneState localPlat hosts node = case lookupHost node.platform hosts of
+commandForNode :: RemoteLaneState -> Platform -> Hosts -> NodeId -> T.Text
+commandForNode remoteLaneState localPlat hosts node = case lookupHost node.platform hosts of
     Just h -> case remoteLaneState of
         RemoteLanes sha -> commandFor (Ssh h sha arch) node.recipe
-        NoRemoteLanes
-            | DumpRun <- mode -> commandFor (Ssh h shaPlaceholder arch) node.recipe
-            | otherwise -> shaContractError
+        DumpPlaceholder -> commandFor (Ssh h shaPlaceholder arch) node.recipe
+        NoRemoteLanes -> shaContractError
     Nothing
         | node.platform == localPlat -> commandFor Local node.recipe
-        | DumpRun <- mode ->
+        | DumpPlaceholder <- remoteLaneState ->
             commandFor (Ssh (hostFromText "<unconfigured>") shaPlaceholder arch) node.recipe
         | otherwise -> hostContractError
   where
