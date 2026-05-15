@@ -29,7 +29,7 @@ import CI.Platform (Platform, localPlatform, osToPlatform)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
 import CI.Root (findRoot)
-import CI.Transport (ArchKind (..), Transport (..), commandFor)
+import CI.Transport (Transport (..), commandFor)
 import CI.Verdict (exitWithVerdict, newOutcomes, recordOutcome)
 import Control.Concurrent.Async (link, wait, withAsync)
 import Control.Monad (foldM, void)
@@ -383,22 +383,18 @@ Selection rule, in order:
 commandForNode :: RemoteLaneState -> Platform -> Hosts -> NodeId -> T.Text
 commandForNode remoteLaneState localPlat hosts node = case lookupHost node.platform hosts of
     Just h -> case remoteLaneState of
-        RemoteLanes sha -> commandFor (Ssh h sha arch) node.recipe
-        DumpPlaceholder -> commandFor (Ssh h shaPlaceholder arch) node.recipe
+        RemoteLanes sha -> commandFor (ssh h sha) node.recipe
+        DumpPlaceholder -> commandFor (ssh h shaPlaceholder) node.recipe
         NoRemoteLanes -> shaContractError
     Nothing
         | node.platform == localPlat -> commandFor Local node.recipe
         | DumpPlaceholder <- remoteLaneState ->
-            commandFor (Ssh (hostFromText "<unconfigured>") shaPlaceholder arch) node.recipe
+            commandFor (ssh (hostFromText "<unconfigured>") shaPlaceholder) node.recipe
         | otherwise -> hostContractError
   where
-    -- Same-platform target ⇒ same-arch (modulo cross-arch within one
-    -- Platform, e.g. x86_64-linux runner reaching aarch64-linux; we
-    -- don't refine here yet — the cost is only the closure-copy step,
-    -- which fails fast with a clear "Exec format error" if it bites).
-    arch
-        | node.platform == localPlat = NativeArch
-        | otherwise = ForeignArch
+    -- Hand 'CI.Transport' both platforms; arch classification lives
+    -- there, next to the consumer that varies on it.
+    ssh h sha = Ssh h sha localPlat node.platform
     hostContractError =
         error $
             "internal error: no SSH host for "

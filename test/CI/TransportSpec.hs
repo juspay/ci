@@ -11,7 +11,8 @@ module CI.TransportSpec (spec) where
 
 import CI.Git (shaPlaceholder)
 import CI.Hosts (hostFromText)
-import CI.Transport (ArchKind (..), Transport (..), commandFor, remoteRunner)
+import CI.Platform (Platform (..))
+import CI.Transport (Transport (..), commandFor, remoteRunner)
 import qualified Data.Text as T
 import Test.Hspec
 
@@ -38,21 +39,25 @@ spec = do
             -- through to ssh.
             remoteRunner (hostFromText "pulse-host") `shouldBe` "ssh -T pulse-host"
 
-    describe "commandFor (Ssh ... ArchKind)" $ do
+    describe "commandFor (Ssh ... localPlat targetPlat)" $ do
         let host = hostFromText "remote.example.com"
             sha = shaPlaceholder
             recipe = "ci::build"
-            native = commandFor (Ssh host sha NativeArch) recipe
-            foreign_ = commandFor (Ssh host sha ForeignArch) recipe
+            -- Same-platform pair: Transport classifies as NativeArch
+            -- internally and emits the closure-copy + absolute-path shape.
+            native = commandFor (Ssh host sha Linux Linux) recipe
+            -- Cross-platform pair: Transport classifies as ForeignArch
+            -- internally and skips the closure-copy step.
+            foreign_ = commandFor (Ssh host sha Linux Macos) recipe
 
-        it "NativeArch prepends a `nix-store --export | runner nix-store --import` step" $
+        it "same-platform target prepends a `nix-store --export | runner nix-store --import` step" $
             ("nix-store --export" `T.isInfixOf` native) `shouldBe` True
 
-        it "NativeArch invokes just by absolute /nix/store path" $
+        it "same-platform target invokes just by absolute /nix/store path" $
             ("/nix/store/" `T.isInfixOf` native) `shouldBe` True
 
-        it "ForeignArch omits the nix-store --export step" $
+        it "cross-platform target omits the nix-store --export step" $
             ("nix-store --export" `T.isInfixOf` foreign_) `shouldBe` False
 
-        it "ForeignArch invokes bare `just --no-deps`" $
+        it "cross-platform target invokes bare `just --no-deps`" $
             ("just --no-deps ci::build" `T.isInfixOf` foreign_) `shouldBe` True

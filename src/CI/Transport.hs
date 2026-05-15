@@ -22,7 +22,6 @@ prefix uses the @pu@ incus client verbatim instead. See
 -}
 module CI.Transport (
     Transport (..),
-    ArchKind (..),
     commandFor,
     remoteRunner,
 )
@@ -31,6 +30,7 @@ where
 import CI.Git (Sha)
 import CI.Hosts (Host)
 import CI.Justfile (RecipeName, justBin, recipeCommand)
+import CI.Platform (Platform)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (display)
@@ -38,9 +38,9 @@ import Data.Text.Display (display)
 {- | Where a node runs. 'Local' means the spawning process-compose
 already @chdir@'d into the pinned worktree (see
 'CI.Pipeline.RunMode') so the @just@ subprocess inherits the
-right cwd; @Ssh host sha arch@ means the command is a wrapper that
-bundles HEAD to @host@, clones it there, checks out @sha@, and
-runs @just@ in that remote checkout.
+right cwd; @Ssh host sha localPlat targetPlat@ means the command
+is a wrapper that bundles HEAD to @host@, clones it there, checks
+out @sha@, and runs @just@ in that remote checkout.
 
 The 'Sha' rides inside 'Ssh' (not as a separate parameter) because
 it's only meaningful on the SSH path — a local node runs against
@@ -53,10 +53,14 @@ Despite the name, @Ssh@ also covers incus-style runners spelled as
 *kind* of execution (remote, SSH-shaped command-prefix), not the
 literal binary. See 'remoteRunner'.
 
-The 'ArchKind' decides whether to nix-copy our local @just@ closure
-to the remote (only sound when the remote can execute the binary).
+The two 'Platform's (runner-local and target) let this module
+derive the arch-compatibility decision internally: callers hand
+over both platforms and Transport classifies them via
+'archKindFor'. That keeps arch semantics — "can we nix-copy our
+@just@ closure to this remote?" — encapsulated here rather than
+spread across the caller and the @sshCommand@ shape.
 -}
-data Transport = Local | Ssh Host Sha ArchKind
+data Transport = Local | Ssh Host Sha Platform Platform
 
 {- | Whether the remote can execute binaries from the runner's own
 @\/nix\/store@.
@@ -71,10 +75,24 @@ data Transport = Local | Ssh Host Sha ArchKind
     a darwin remote). Our local binary won't run there, so we skip
     the closure-copy and invoke @just@ from the remote's PATH.
 
-The classifier sits one level up in 'CI.Pipeline': @node.platform
-== localPlat@ ⇒ 'NativeArch'.
+Module-private: callers hand 'commandFor' the two 'Platform's
+('Ssh''s third and fourth fields) and 'archKindFor' produces the
+'ArchKind' here. The classifier lives next to the consumer so a
+refinement of arch detection (e.g. distinguishing x86_64-linux
+from aarch64-linux within one 'Platform') touches this module
+only.
 -}
 data ArchKind = NativeArch | ForeignArch
+
+{- | Same-platform target ⇒ same-arch (modulo cross-arch within one
+'Platform', e.g. x86_64-linux runner reaching aarch64-linux; we
+don't refine here yet — the cost is only the closure-copy step,
+which fails fast with a clear "Exec format error" if it bites).
+-}
+archKindFor :: Platform -> Platform -> ArchKind
+archKindFor localPlat targetPlat
+    | localPlat == targetPlat = NativeArch
+    | otherwise = ForeignArch
 
 {- | The shell command process-compose runs for one node. Local
 nodes use the same @just --no-deps@ invocation as before
@@ -84,7 +102,8 @@ nodes emit the three-call bundle+clone+run dance against
 -}
 commandFor :: Transport -> RecipeName -> Text
 commandFor Local r = recipeCommand r
-commandFor (Ssh host sha arch) r = sshCommand host sha r arch
+commandFor (Ssh host sha localPlat targetPlat) r =
+    sshCommand host sha r (archKindFor localPlat targetPlat)
 
 {- | The shell-tokens prefix that runs a command on this 'Host'.
 Two flavours:
