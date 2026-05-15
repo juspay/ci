@@ -15,9 +15,9 @@
 [metadata("ci")]
 default: checks run-check
 
-# Fan out `build` and `flake-check` to run in parallel.
+# Fan out `build`, `flake-check`, and `fmt-check` to run in parallel.
 [parallel]
-checks: build flake-check
+checks: build flake-check fmt-check
 
 # Build the package with Nix.
 build:
@@ -26,6 +26,12 @@ build:
 # Run the flake's checks (formatting, hlint, etc. via haskell-flake).
 flake-check:
     nix flake check --print-build-logs
+
+# Fail the build if any Haskell source isn't fourmolu-formatted. The
+# dev shell exposes fourmolu via haskell-flake; --mode check exits
+# non-zero on any drift and prints a unified diff of what would change.
+fmt-check:
+    nix develop -c fourmolu --mode check $(find src test app -name '*.hs')
 
 # Smoke-test the dump-yaml subcommand. The pipeline root is `ci::default`,
 # tagged [linux] [macos] [metadata("ci")] — so the fanout produces both

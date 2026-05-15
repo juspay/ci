@@ -78,4 +78,3 @@ parseNodeId t = case T.breakOnEnd "@" t of
         if T.null recipeText
             then Nothing
             else Just (NodeId (recipeNameFromText recipeText) p)
-
