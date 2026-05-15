@@ -44,3 +44,10 @@ spec = do
 
         it "uses the runner prefix for every remote call" $
             ("ssh -T remote.example.com" `T.isInfixOf` cmd) `shouldBe` True
+
+        it "main recipe is in the && chain (setup failure stops it, not just cleanup)" $ do
+            -- The && chain must contain the main recipe invocation so that a failed
+            -- nix-store import or git clone aborts before running the recipe.
+            -- If the recipe were after "; " it would run with uninitialized $T.
+            let parts = T.splitOn " && " cmd
+            any ("/bin/just --no-deps" `T.isInfixOf`) parts `shouldBe` True

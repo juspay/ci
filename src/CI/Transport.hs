@@ -99,20 +99,22 @@ remoteRunner host = "ssh -T " <> display host
   4. @<runner> "cd ... && 'CI.Nix.realisedJust' "@ — realise the
      drv on the remote (its substituter chain fetches the native
      binary) and invoke @just --no-deps \<recipe\>@.
-  5. @<runner> "rm -rf $T"@ — cleanup, always runs.
+  5. @<runner> "rm -rf $T"@ — cleanup, always runs (via @;@).
   6. @exit $rc@ — propagate the build's exit code as the node's.
+
+Steps 1–4 are joined with @&&@ so a setup failure (failed import,
+failed clone, etc.) stops the chain early; @rc=$?@ captures that
+failure code. Step 5 uses @;@ to run unconditionally — cleanup
+must happen even when setup fails and @$T@ was never assigned (in
+that case @rm -rf ""@ is a no-op).
 
 The remote needs Nix installed (which it must, to run the recipes
 themselves) — @just@ specifically does *not* need to be on PATH.
 -}
 remoteCommand :: Host -> Sha -> Platform -> RecipeName -> Text
 remoteCommand host sha targetPlat recipe =
-    T.intercalate " && " (shipJustDrv r targetPlat : setupSteps)
-        <> "; "
-        <> r
-        <> " \"cd $T/src && "
-        <> realisedJust targetPlat recipe
-        <> "\"; rc=$?; "
+    T.intercalate " && " (shipJustDrv r targetPlat : setupSteps ++ [mainStep])
+        <> "; rc=$?; "
         <> r
         <> " \"rm -rf $T\"; exit $rc"
   where
@@ -125,3 +127,5 @@ remoteCommand host sha targetPlat recipe =
             <> display sha
             <> "\""
         ]
+    mainStep =
+        r <> " \"cd $T/src && " <> realisedJust targetPlat recipe <> "\""
