@@ -19,9 +19,9 @@ where
 import qualified Algebra.Graph.AdjacencyMap as G
 import CI.CommitStatus (postStatusFor, seedPending)
 import CI.Gh (viewRepo)
-import CI.Git (Sha, ensureCleanTree, resolveSha, withSnapshotWorktree)
+import CI.Git (Sha, ensureCleanTree, resolveSha, shaPlaceholder, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
-import CI.Hosts (Hosts, hostsPath, loadHosts, lookupHost, promptAndPersistHost)
+import CI.Hosts (Hosts, hostFromText, hostsPath, loadHosts, lookupHost, promptAndPersistHost)
 import CI.Justfile (Attribute (..), Recipe (..), RecipeName, fetchDump)
 import CI.LogPath (logDirFor, logPathFor, platformDir)
 import CI.Node (NodeId (..), parseNodeId)
@@ -35,8 +35,8 @@ import Control.Concurrent.Async (link, wait, withAsync)
 import Control.Monad (foldM, void)
 import Data.Foldable (for_)
 import Data.List (nub)
-import Data.Maybe (isNothing)
 import qualified Data.Map.Strict as Map
+import Data.Maybe (fromMaybe, isNothing)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
@@ -191,6 +191,15 @@ data RunMode
     = LocalRun
     | -- | @StrictRun worktreeDir logDir@.
       StrictRun FilePath FilePath
+    | {- | YAML-inspection mode for @dump-yaml@: no working dir, no log
+      routing, and (importantly) no host resolution side effects.
+      Missing 'CI.Hosts.Host' entries are tolerated; SSH-lane
+      commands render with a placeholder so the structural keys
+      (process names, depends_on edges) still reflect the real
+      fanout. Used by the macos remote's smoke test where stdin is
+      closed and prompting would deadlock.
+      -}
+      DumpRun
 
 {- | Walk @just --dump@ → root → reachable subgraph → topologically
 lowered DAG → fan out across the pipeline's platform set →
@@ -228,19 +237,24 @@ buildProcessCompose mode = do
         hasRemote = any (/= localPlat) pipelinePlatforms
     hosts <- resolveHostsFor mode localPlat pipelinePlatforms
     -- Only the SSH branch in 'CI.Transport.commandFor' needs a SHA, so
-    -- we shell out to git only when at least one lane is remote. This
-    -- keeps @dump-yaml@ for a single-platform pipeline working outside
-    -- a git checkout (the original behaviour).
-    remoteLaneState <-
-        if hasRemote
-            then RemoteLanes <$> (dieOnLeft =<< resolveSha)
-            else pure NoRemoteLanes
-    let mkCommand = commandForNode remoteLaneState localPlat hosts
+    -- we shell out to git only when at least one lane is remote. In
+    -- 'DumpRun' we go further: skip 'resolveSha' even when remote lanes
+    -- exist, letting 'commandForNode' fall back to 'shaPlaceholder'.
+    -- That keeps @dump-yaml@ working outside a git checkout in both
+    -- single- and multi-platform pipelines.
+    remoteLaneState <- case mode of
+        DumpRun -> pure NoRemoteLanes
+        _
+            | hasRemote -> RemoteLanes <$> (dieOnLeft =<< resolveSha)
+            | otherwise -> pure NoRemoteLanes
+    let mkCommand = commandForNode mode remoteLaneState localPlat hosts
     pure $ toProcessCompose (workingDir mode) mkCommand (logLocation mode) nodeGraph
   where
     workingDir LocalRun = Nothing
+    workingDir DumpRun = Nothing
     workingDir (StrictRun wt _) = Just wt
     logLocation LocalRun = const Nothing
+    logLocation DumpRun = const Nothing
     logLocation (StrictRun _ ld) = Just . logPathFor ld
 
 {- | The pipeline's platform set, derived from the root recipe's
@@ -267,10 +281,16 @@ fanOut platforms g =
     G.vertices [NodeId r p | r <- G.vertexList g, p <- platforms]
         `G.overlay` G.edges [(NodeId r p, NodeId d p) | (r, d) <- G.edgeList g, p <- platforms]
 
-{- | Load the hosts config and ensure every remote platform the
-pipeline targets has a host. In 'LocalRun' we prompt on miss and
-persist; in 'StrictRun' the runner refuses to start without
-complete config so a missing host doesn't tear the run down mid-way.
+{- | Load the hosts config and reconcile it with the pipeline's remote
+lanes. Three modes, three policies:
+
+ * 'LocalRun' — prompt-on-miss and persist. Interactive dev runs.
+ * 'StrictRun' — die-on-miss with a useful message. No TTY mid-run,
+   so a missing host must surface before the pipeline starts.
+ * 'DumpRun' — best-effort: return the loaded map verbatim. Missing
+   entries render as placeholder commands inside 'commandForNode' so
+   inspection works even when the runner has no hosts.json (the
+   @dump-yaml@ smoke test on a remote-only-via-SSH lane).
 -}
 resolveHostsFor :: RunMode -> Platform -> [Platform] -> IO Hosts
 resolveHostsFor mode localPlat platforms = do
@@ -278,6 +298,7 @@ resolveHostsFor mode localPlat platforms = do
     let remotes = filter (/= localPlat) platforms
     case mode of
         LocalRun -> foldM addInteractively hosts0 remotes
+        DumpRun -> pure hosts0
         StrictRun{} -> do
             let missing = filter (isNothing . (`lookupHost` hosts0)) remotes
             case missing of
@@ -310,25 +331,35 @@ data RemoteLaneState = NoRemoteLanes | RemoteLanes Sha
 {- | Per-node command construction: 'Local' if the node's platform
 matches the runner; otherwise 'Ssh' against the resolved host.
 
-The two error branches witness the fan-out invariants:
-'resolveHostsFor' ensures every remote platform has a host, and
-'buildProcessCompose' produces 'RemoteLanes' iff a remote lane exists.
-A remote 'NodeId' with 'NoRemoteLanes' would be a 'fanOut' bug — the
-caller shouldn't be able to build that state, so we 'error' rather
-than carry a defensive 'Maybe' through the type.
+For 'LocalRun'/'StrictRun': the two error branches witness the
+fan-out invariants — 'resolveHostsFor' ensures every remote
+platform has a host, and 'buildProcessCompose' produces
+'RemoteLanes' iff a remote lane exists. A remote 'NodeId' with
+'NoRemoteLanes' would be a 'fanOut' bug — the caller shouldn't be
+able to build that state, so we 'error' rather than carry a
+defensive 'Maybe' through the type.
+
+For 'DumpRun': missing-host is *expected* (it's the whole reason
+DumpRun exists), so the SSH command renders against a placeholder
+'Host'. The YAML still reflects the real fanout shape — process
+keys, depends_on edges — only the @command@ string is unusable.
 -}
-commandForNode :: RemoteLaneState -> Platform -> Hosts -> NodeId -> T.Text
-commandForNode remoteLaneState localPlat hosts node
+commandForNode :: RunMode -> RemoteLaneState -> Platform -> Hosts -> NodeId -> T.Text
+commandForNode mode remoteLaneState localPlat hosts node
     | node.platform == localPlat = commandFor Local node.recipe
+    | DumpRun <- mode =
+        -- Best-effort: known host renders against it, unknown against
+        -- a visible placeholder. SHA is always 'shaPlaceholder' because
+        -- 'buildProcessCompose' skips 'resolveSha' in 'DumpRun'.
+        let h = fromMaybe (hostFromText "<unconfigured>") (lookupHost node.platform hosts)
+         in commandFor (Ssh h shaPlaceholder) node.recipe
     | otherwise = case (lookupHost node.platform hosts, remoteLaneState) of
         (Just h, RemoteLanes sha) -> commandFor (Ssh h sha) node.recipe
-        (Nothing, _) ->
+        _ ->
             error $
-                "internal error: no SSH host for "
+                "internal error: no SSH host or SHA for "
                     <> T.unpack (display node.platform)
-                    <> " (resolveHostsFor should have caught this)"
-        (_, NoRemoteLanes) ->
-            error "internal error: remote NodeId reached commandForNode with NoRemoteLanes (fanOut contract violated)"
+                    <> " (resolveHostsFor + buildProcessCompose should have caught this)"
 
 {- | The single 'die' site in the project: every recoverable failure
 mode threads up through @Either e a@ to this boundary, where the
