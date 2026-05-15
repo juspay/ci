@@ -64,7 +64,7 @@ assertion surface without exercising any new code path.
 encodeYaml :: (NodeId -> Maybe FilePath) -> String
 encodeYaml mkLog =
     BS8.unpack . Y.encode $
-        toProcessCompose Nothing (const "echo hi") mkLog graph
+        toProcessCompose (const "echo hi") (const Nothing) mkLog graph
   where
     graph = G.vertex (NodeId "r" X86_64Linux)
 
@@ -73,4 +73,4 @@ test can exercise multi-platform fanout shapes.
 -}
 encodeMulti :: (NodeId -> Maybe FilePath) -> G.AdjacencyMap NodeId -> String
 encodeMulti mkLog g =
-    BS8.unpack . Y.encode $ toProcessCompose Nothing (const "echo hi") mkLog g
+    BS8.unpack . Y.encode $ toProcessCompose (const "echo hi") (const Nothing) mkLog g

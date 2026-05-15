@@ -68,10 +68,12 @@ data Process = Process
     , depends_on :: Map.Map NodeId Dependency
     , availability :: Availability
     , working_dir :: Maybe FilePath
-    {- ^ When set, process-compose @chdir@s the spawned recipe into this
+    {- ^ When set, process-compose @chdir@s the spawned process into this
     directory before executing 'command'. Used in strict mode to pin
-    every recipe to an immutable @git worktree@ snapshot of HEAD.
-    'Nothing' omits the field from the YAML so dev runs are unchanged.
+    every local recipe to an immutable @git worktree@ snapshot of
+    HEAD. 'Nothing' omits the field from the YAML — both for dev runs
+    (which run against the live tree) and for setup-node processes
+    (which are @ssh -T ...@ launchers whose local cwd is ignored).
     -}
     , log_location :: Maybe FilePath
     {- ^ When set, process-compose routes this process's stdout/stderr to
@@ -136,23 +138,29 @@ data RestartPolicy = No | ExitOnFailure
 instance ToJSON RestartPolicy where
     toJSON = genericToJSON snakeCaseTag
 
-{- | Assemble a @process-compose@ config from a pre-validated execution graph.
-The caller supplies @mkCommand@ (the shell command emitted for each
-vertex), @mkLogLocation@ (the per-process log path, or 'Nothing' to fall
-back to the global log), and @workingDir@ (the directory every recipe
-is @chdir@'d into, or 'Nothing' to leave it unset). Each outgoing edge
-becomes a @depends_on@ entry. Keeping these policy decisions out of
-this module lets callers vary how vertices are invoked, where they
-execute, and where their output lands without the YAML emitter knowing
-about any of those choices.
+{- | Assemble a @process-compose@ config from a pre-validated execution
+graph. The caller supplies three per-vertex callbacks:
+
+  * @mkCommand@ — the shell command emitted for each vertex.
+  * @mkWorkingDir@ — the directory the process is @chdir@'d into,
+    or 'Nothing' to leave it unset. Per-node (not uniform) so
+    e.g. SSH-launcher processes can opt out of the local worktree
+    pin (their cwd is ignored once the @ssh@ tokens take over).
+  * @mkLogLocation@ — the per-process log path, or 'Nothing' to
+    fall back to the global log.
+
+Each outgoing edge becomes a @depends_on@ entry. Keeping these
+policy decisions out of this module lets callers vary how
+vertices are invoked, where they execute, and where their output
+lands without the YAML emitter knowing about any of those choices.
 -}
 toProcessCompose ::
-    Maybe FilePath ->
     (NodeId -> Text) ->
+    (NodeId -> Maybe FilePath) ->
     (NodeId -> Maybe FilePath) ->
     G.AdjacencyMap NodeId ->
     ProcessCompose
-toProcessCompose workingDir mkCommand mkLogLocation g =
+toProcessCompose mkCommand mkWorkingDir mkLogLocation g =
     ProcessCompose $ Map.fromSet mkProcess (G.vertexSet g)
   where
     mkProcess node =
@@ -160,7 +168,7 @@ toProcessCompose workingDir mkCommand mkLogLocation g =
             { command = mkCommand node
             , depends_on = Map.fromSet (const (Dependency ProcessCompletedSuccessfully)) (G.postSet node g)
             , availability = Availability{restart = No, exit_on_skipped = False}
-            , working_dir = workingDir
+            , working_dir = mkWorkingDir node
             , log_location = mkLogLocation node
             }
 

@@ -207,17 +207,28 @@ data RunMode
       -}
       DumpRun
 
-{- | The two YAML-shape projections of 'RunMode': the working
-directory every local recipe @chdir@s into, and the per-node log
-location the YAML emitter routes stdout/stderr to. Both vary
-together across modes — 'StrictRun' supplies both; 'LocalRun' and
-'DumpRun' supply neither — so they live in a single
-'RunMode'-pattern-match rather than two parallel where-clauses that
-have to stay in lockstep across future 'RunMode' constructors.
+{- | The two YAML-shape projections of 'RunMode': the per-node working
+directory every recipe @chdir@s into, and the per-node log location
+the YAML emitter routes stdout/stderr to. Both vary together across
+modes — 'StrictRun' supplies both; 'LocalRun' and 'DumpRun' supply
+neither — so they live in a single 'RunMode'-pattern-match rather
+than two parallel where-clauses that have to stay in lockstep
+across future 'RunMode' constructors.
+
+The working-dir callback is per-node (not uniform): setup nodes
+are @ssh -T \<host\>@ launcher processes whose local cwd is
+ignored by ssh, so the worktree pin would be a misleading
+no-op in the emitted YAML. They get 'Nothing' regardless of
+mode; user recipes get 'Just worktreePath' in 'StrictRun' and
+'Nothing' elsewhere.
 -}
-yamlPathsFor :: RunMode -> (Maybe FilePath, NodeId -> Maybe FilePath)
-yamlPathsFor (StrictRun wt ld) = (Just wt, Just . logPathFor ld)
-yamlPathsFor _ = (Nothing, const Nothing)
+yamlPathsFor :: RunMode -> (NodeId -> Maybe FilePath, NodeId -> Maybe FilePath)
+yamlPathsFor (StrictRun wt ld) = (workingDirFor wt, Just . logPathFor ld)
+  where
+    workingDirFor w n
+        | isSetupNode n = Nothing
+        | otherwise = Just w
+yamlPathsFor _ = (const Nothing, const Nothing)
 
 {- | Walk @just --dump@ → root → reachable subgraph → topologically
 lowered DAG → fan out across the pipeline's platform set →
@@ -272,7 +283,7 @@ buildProcessCompose mode = do
             | otherwise -> pure NoRemoteLanes
     let mkCommand = commandForNode remoteLaneState localPlat hosts
         (yamlWorkingDir, yamlLogLocation) = yamlPathsFor mode
-    pure $ toProcessCompose yamlWorkingDir mkCommand yamlLogLocation nodeGraph
+    pure $ toProcessCompose mkCommand yamlWorkingDir yamlLogLocation nodeGraph
 
 {- | The pipeline's platform set: the intersection of (the root
 recipe's declared OS families) with (the systems we have either a
