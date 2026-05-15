@@ -10,10 +10,8 @@ module CI.TransportSpec (spec) where
 
 import CI.Git (shaPlaceholder)
 import CI.Hosts (hostFromText)
-import CI.Node (NodeId (..))
-import CI.NodeKind (setupRecipe)
 import CI.Platform (Platform (..))
-import CI.Transport (Transport (..), cachedRunDir, commandFor, remoteRunner)
+import CI.Transport (CommandShape (..), Transport (..), cachedRunDir, commandFor, remoteRunner)
 import qualified Data.Text as T
 import Test.Hspec
 
@@ -33,13 +31,13 @@ spec = do
         it "uses ~/.cache/ci/<short-sha>/<platform> on the remote" $
             cachedRunDir shaPlaceholder Aarch64Darwin `shouldBe` "$HOME/.cache/ci/0000000/aarch64-darwin"
 
-    describe "commandFor Ssh on a setup node" $ do
+    describe "commandFor Ssh + SetupCommand" $ do
         let host = hostFromText "remote.example.com"
             sha = shaPlaceholder
-            -- Setup-vs-recipe is discriminated off the NodeId, not the
-            -- Transport: same 'Ssh' constructor, different node kind.
-            setupNode = NodeId setupRecipe Aarch64Darwin
-            cmd = commandFor (Ssh host sha Aarch64Darwin) setupNode
+            -- Setup-vs-recipe is discriminated by 'CommandShape',
+            -- chosen by the caller in 'CI.Pipeline'; Transport
+            -- doesn't read node identity to re-derive the choice.
+            cmd = commandFor (Ssh host sha Aarch64Darwin) SetupCommand
 
         it "ships the just derivation first" $
             ("nix-store --export" `T.isInfixOf` cmd) `shouldBe` True
@@ -53,11 +51,10 @@ spec = do
         it "skips bundle+clone on cache hit" $
             ("cat > /dev/null; exit 0" `T.isInfixOf` cmd) `shouldBe` True
 
-    describe "commandFor Ssh on a recipe node" $ do
+    describe "commandFor Ssh + RecipeCommand" $ do
         let host = hostFromText "remote.example.com"
             sha = shaPlaceholder
-            recipeNode = NodeId "ci::build" Aarch64Darwin
-            cmd = commandFor (Ssh host sha Aarch64Darwin) recipeNode
+            cmd = commandFor (Ssh host sha Aarch64Darwin) (RecipeCommand "ci::build")
 
         it "cd's into the cached run dir set up by the setup node" $
             ("cd $HOME/.cache/ci/" `T.isInfixOf` cmd) `shouldBe` True

@@ -26,12 +26,12 @@ import CI.Justfile (Attribute (..), Recipe (..), RecipeName, fetchDump)
 import qualified CI.Justfile as J
 import CI.LogPath (logDirFor, logPathFor, platformDir)
 import CI.Node (NodeId (..), parseNodeId)
-import CI.NodeKind (setupRecipe)
+import CI.NodeKind (isSetupNode, setupRecipe)
 import CI.Platform (Platform, localPlatform, platformOs)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
 import CI.Root (findRoot)
-import CI.Transport (Transport (..), commandFor)
+import CI.Transport (CommandShape (..), Transport (..), commandFor)
 import CI.Verdict (exitWithVerdict, newOutcomes, recordOutcome)
 import Control.Concurrent.Async (link, wait, withAsync)
 import Control.Monad (void)
@@ -363,31 +363,32 @@ remote.
 -}
 data RemoteLaneState = NoRemoteLanes | RemoteLanes Sha
 
-{- | Per-node command construction.
+{- | Per-node command construction. Picks both transport and
+command shape from what the orchestrator already knows:
 
-  * Hosts-entry present → SSH through that runner (overrides local
-    inline execution even when @node.platform == localPlat@). The
-    'Ssh' transport carries the target 'Platform' directly; per-arch
-    behaviour and the setup-vs-recipe split live in
-    'CI.Transport.commandFor'.
-
-  * No hosts entry, but platform matches local → inline @Local@.
-
-  * No hosts entry, non-local platform → unreachable by the
-    'pipelinePlatformsFor' invariant. Every platform in
-    @pipelinePlatforms@ either matches local or has a hosts entry
-    by construction, so a 'Nothing' on the non-local branch means
-    something is wrong upstream.
+  * Transport — Hosts-entry present → SSH (overrides local inline
+    execution even when @node.platform == localPlat@); no entry
+    and platform matches local → 'Local'; no entry and non-local
+    platform is unreachable by the 'pipelinePlatformsFor'
+    invariant.
+  * Shape — 'isSetupNode' picks 'SetupCommand' (the per-platform
+    bundle/drv-ship choreography); every other node is
+    'RecipeCommand'. The setup-vs-recipe choice is made here at
+    the same site that owns the fanout, instead of being re-derived
+    inside 'CI.Transport.commandFor'.
 -}
 commandForNode :: RemoteLaneState -> Platform -> Hosts -> NodeId -> T.Text
 commandForNode remoteLaneState localPlat hosts node = case lookupHost node.platform hosts of
     Just h -> case remoteLaneState of
-        RemoteLanes sha -> commandFor (Ssh h sha node.platform) node
+        RemoteLanes sha -> commandFor (Ssh h sha node.platform) shape
         NoRemoteLanes -> shaContractError
     Nothing
-        | node.platform == localPlat -> commandFor Local node
+        | node.platform == localPlat -> commandFor Local shape
         | otherwise -> hostContractError
   where
+    shape
+        | isSetupNode node = SetupCommand
+        | otherwise = RecipeCommand node.recipe
     hostContractError =
         error $
             "internal error: no SSH host for "
