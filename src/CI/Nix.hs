@@ -1,20 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 
--- The helper used inside the TH splices below ('staticDrvPath') lives
--- in @CI.Nix.Splice@ because TH's stage restriction forbids a splice
--- from calling a function defined in the same module.
-
 {- | Compile-time Nix-derivation references and the shell snippets
 that ship them across.
 
 'justDrvFor' is the analogue of 'System.Which.staticWhich' for a
 @.drv@ path (rather than an output path) — one per supported
 'CI.Platform.Platform', baked in at TH-splice time from the
-@CI_JUST_DRV_\<system\>@ env vars the flake injects. The drv
-files themselves materialise as a side effect of flake
-evaluation, so the local Nix store has them ready for @nix-store
---export@ at runtime.
+@CI_JUST_DRV_\<system\>@ env vars the flake injects. Lookup uses
+'Language.Haskell.TH.Env.envQ'' (which fails the build if the var
+isn't set), so building outside @nix develop@ (or without the
+flake's env-var plumbing) errors immediately rather than silently
+embedding a placeholder.
 
 Two consumers, both in 'CI.Transport':
 
@@ -30,36 +27,31 @@ Keeping both shell snippets here means every concrete Nix-CLI
 invocation (export, import, realise, output-selector syntax) is
 in one module instead of woven into the bundle+ssh choreography
 of 'CI.Transport'.
-
-If the env var is unset at compile time (e.g. plain @cabal build@
-outside the flake), the splice emits a clearly-broken placeholder
-so the build still succeeds and the failure mode at runtime is a
-recognisable "invalid store path" error.
 -}
 module CI.Nix (justDrvFor, shipJustDrv, realisedJust) where
 
 import CI.Justfile (RecipeName)
-import CI.Nix.Splice (staticDrvPath)
 import CI.Platform (Platform (..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (display)
+import Language.Haskell.TH.Env (envQ')
 
 -- | @/nix/store/...drv@ for @just@ on @x86_64-linux@, baked in.
 justDrvX86_64Linux :: FilePath
-justDrvX86_64Linux = $(staticDrvPath "CI_JUST_DRV_X86_64_LINUX")
+justDrvX86_64Linux = $$(envQ' "CI_JUST_DRV_X86_64_LINUX")
 
 -- | @/nix/store/...drv@ for @just@ on @aarch64-linux@, baked in.
 justDrvAarch64Linux :: FilePath
-justDrvAarch64Linux = $(staticDrvPath "CI_JUST_DRV_AARCH64_LINUX")
+justDrvAarch64Linux = $$(envQ' "CI_JUST_DRV_AARCH64_LINUX")
 
 -- | @/nix/store/...drv@ for @just@ on @x86_64-darwin@, baked in.
 justDrvX86_64Darwin :: FilePath
-justDrvX86_64Darwin = $(staticDrvPath "CI_JUST_DRV_X86_64_DARWIN")
+justDrvX86_64Darwin = $$(envQ' "CI_JUST_DRV_X86_64_DARWIN")
 
 -- | @/nix/store/...drv@ for @just@ on @aarch64-darwin@, baked in.
 justDrvAarch64Darwin :: FilePath
-justDrvAarch64Darwin = $(staticDrvPath "CI_JUST_DRV_AARCH64_DARWIN")
+justDrvAarch64Darwin = $$(envQ' "CI_JUST_DRV_AARCH64_DARWIN")
 
 {- | Drv path for @just@ on the given target platform — the recipe
 shipped to that remote, realised on-site to produce a natively
