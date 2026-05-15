@@ -11,11 +11,12 @@ runner should use for that lane. Lives at
 @~\/.config\/ci\/hosts.json@ — one global file per user, shared
 across every repo on this machine. Same convention kolu uses.
 
-Two operations: 'loadHosts' (read the file, drop unknown keys),
-and 'promptAndPersistHost' (look up a platform; prompt and persist on
-miss). Prompting is only correct in interactive mode — strict
-mode ('CI=true') must precede with a clean miss-test and die
-before the run starts, because there's no TTY mid-run.
+Read-only from the runner's perspective: the user edits the JSON
+file by hand. 'loadHosts' reads the file (dropping unknown keys),
+'lookupHost' / 'hostsPlatforms' query the result. Missing entries
+are not an error — 'CI.Pipeline.pipelinePlatformsFor' silently
+excludes platforms with no entry from the fanout, so the user
+opts in to a remote lane by adding its hosts.json key.
 -}
 module CI.Hosts (
     Host,
@@ -56,15 +57,15 @@ hostFromText :: Text -> Host
 hostFromText = Host
 
 {- | A loaded view of @~\/.config\/ci\/hosts.json@. Newtype around the
-underlying map so 'promptAndPersistHost' / 'lookupHost' are the only access
-points (no module-external pattern matching on the map shape).
+underlying map so 'lookupHost' and 'hostsPlatforms' are the only
+access points (no module-external pattern matching on the map shape).
 -}
 newtype Hosts = Hosts (Map Platform Host)
     deriving stock (Show)
 
 {- | Absolute path to the hosts config: @\$HOME\/.config\/ci\/hosts.json@.
-Computed once per process; the directory is auto-created on first
-write via 'persistHost'.
+Computed once per process. The runner only reads the file; the
+user creates it.
 -}
 hostsPath :: IO FilePath
 hostsPath = do
@@ -72,9 +73,10 @@ hostsPath = do
     pure (home </> ".config" </> "ci" </> "hosts.json")
 
 {- | Read the config file. Missing file → empty map (a fresh user has
-no hosts yet, and that's not an error until something tries to
-'promptAndPersistHost' a remote platform). Malformed JSON → 'fail'; we'd
-rather refuse than silently drop the whole map.
+no hosts yet, and that's not an error — 'pipelinePlatformsFor'
+filters non-local platforms without entries out of the fanout).
+Malformed JSON → 'fail'; we'd rather refuse than silently drop
+the whole map.
 
 Unknown platform keys are dropped silently — a future addition to
 the 'Platform' enum shouldn't reject older configs, and an
