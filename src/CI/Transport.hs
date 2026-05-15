@@ -42,7 +42,6 @@ module CI.Transport (
     CommandShape (..),
     commandFor,
     remoteRunner,
-    cachedRunDir,
 )
 where
 
