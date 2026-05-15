@@ -80,7 +80,8 @@ outputs the derivation declares.
 
 Intended to sit inside a *single-quoted* shell argument to ssh so
 the @$()@ subshell is evaluated by the remote shell rather than
-the local one — see 'CI.Transport.remoteShell'.
+the local one — see 'CI.Transport.recipeRemoteCommand', the
+sole call site.
 -}
 realisedJust :: Platform -> RecipeName -> Text
 realisedJust targetPlat recipe =
