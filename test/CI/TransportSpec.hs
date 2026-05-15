@@ -11,7 +11,7 @@ module CI.TransportSpec (spec) where
 import CI.Git (shaPlaceholder)
 import CI.Hosts (hostFromText)
 import CI.Platform (Platform (..))
-import CI.Transport (Transport (..), commandFor, remoteRunner)
+import CI.Transport (commandFor, remoteRunner, sshTransport)
 import qualified Data.Text as T
 import Test.Hspec
 
@@ -31,7 +31,7 @@ spec = do
         let host = hostFromText "remote.example.com"
             sha = shaPlaceholder
             recipe = "ci::build"
-            cmd = commandFor (Ssh host sha Aarch64Darwin) recipe
+            cmd = commandFor (sshTransport host sha Aarch64Darwin) recipe
 
         it "ships the just derivation via nix-store --export | nix-store --import" $
             ("nix-store --export" `T.isInfixOf` cmd) `shouldBe` True

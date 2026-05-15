@@ -23,7 +23,8 @@ local @ssh@ config knows how to dial works, including aliases from
 that names them; no special-case client involved at this layer.)
 -}
 module CI.Transport (
-    Transport (..),
+    Transport (Local),
+    sshTransport,
     commandFor,
     remoteRunner,
 )
@@ -57,6 +58,16 @@ Despite the name, @Ssh@ also covers incus-style runners spelled as
 literal binary.
 -}
 data Transport = Local | Ssh Host Sha Platform
+
+{- | Smart constructor for the remote case. The 'Ssh' data constructor
+is unexported, so this is the only way to build a remote
+'Transport' value — callers can't reach in and pattern-match on the
+field order, and a future shape change (e.g. dropping the 'Platform'
+once drv-resolution moves elsewhere) edits one signature instead of
+every construction site.
+-}
+sshTransport :: Host -> Sha -> Platform -> Transport
+sshTransport = Ssh
 
 {- | The shell command process-compose runs for one node. Local
 nodes use the same @just --no-deps@ invocation as before
