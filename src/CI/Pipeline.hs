@@ -25,7 +25,7 @@ import CI.Hosts (Hosts, hostsPlatforms, loadHosts, lookupHost)
 import CI.Justfile (Attribute (..), Recipe (..), RecipeName, fetchDump)
 import qualified CI.Justfile as J
 import CI.LogPath (logDirFor, logPathFor, platformDir)
-import CI.Node (NodeId (..), parseNodeId)
+import CI.Node (NodeId (..), isSetupNode, parseNodeId, setupRecipe)
 import CI.Platform (Platform, localPlatform, platformOs)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
@@ -305,17 +305,6 @@ which families couldn't be satisfied).
 -}
 rootOsFamilies :: Recipe -> [J.Os]
 rootOsFamilies r = [o | Os o <- r.attributes]
-
-{- | The recipe name we reserve for the synthetic per-platform setup
-node. Leading underscore signals "internal, not a user recipe";
-the same prefix convention kolu uses for private lanes.
--}
-setupRecipe :: RecipeName
-setupRecipe = "_ci-setup"
-
--- | Whether a 'NodeId' is the synthetic setup node for its platform.
-isSetupNode :: NodeId -> Bool
-isSetupNode n = n.recipe == setupRecipe
 
 {- | Cross-product the recipe DAG with the pipeline's platform set:
 one 'NodeId' per @(recipe, platform)@, edges replicated

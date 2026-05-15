@@ -16,6 +16,8 @@ its GitHub commit-status contexts.
 module CI.Node (
     NodeId (..),
     parseNodeId,
+    setupRecipe,
+    isSetupNode,
 )
 where
 
@@ -78,3 +80,22 @@ parseNodeId t = case T.breakOnEnd "@" t of
         if T.null recipeText
             then Nothing
             else Just (NodeId (recipeNameFromText recipeText) p)
+
+{- | The reserved recipe name for the per-platform setup node that
+ships the @just@ derivation and the bundled HEAD to a remote.
+Leading underscore signals "internal, not a user recipe"; the
+same prefix convention kolu uses for private lanes.
+
+Lives here (rather than in 'CI.Pipeline' where the fanout uses
+it) so 'CI.CommitStatus' can filter setup nodes out of GitHub
+commit-status posts without an import cycle.
+-}
+setupRecipe :: RecipeName
+setupRecipe = "_ci-setup"
+
+{- | Whether a 'NodeId' is the synthetic setup node for its platform.
+Used by 'CI.CommitStatus' to skip GH signoff for setup nodes —
+those are internal plumbing, not user recipes the PR cares about.
+-}
+isSetupNode :: NodeId -> Bool
+isSetupNode n = n.recipe == setupRecipe
