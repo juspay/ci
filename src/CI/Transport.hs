@@ -17,10 +17,10 @@ right one for its own arch. The remote needs @nix@, @git@, and
 whatever the recipes themselves use, but @just@ specifically does
 *not* need to be pre-installed on PATH.
 
-The runner string is selected from the 'Host': a bare @hostname@
-(or @user\@hostname@) uses @ssh -T@; a literal @pu connect \<name\>@
-prefix uses the @pu@ incus client verbatim instead. See
-'remoteRunner'.
+Every remote node runs over plain @ssh -T \<host\>@ — anything the
+local @ssh@ config knows how to dial works, including aliases from
+@~\/.ssh\/config@. (Incus instances are reached via a host alias
+that names them; no special-case client involved at this layer.)
 -}
 module CI.Transport (
     Transport (..),
@@ -67,29 +67,15 @@ commandFor :: Transport -> RecipeName -> Text
 commandFor Local r = recipeCommand r
 commandFor (Ssh host sha targetPlat) r = remoteCommand host sha targetPlat r
 
-{- | The shell-tokens prefix that runs a command on this 'Host'.
-Two flavours:
-
-  * @ssh -T \<host\>@ — the default. @-T@ suppresses TTY allocation
-    so binary stdin (the @git bundle@ stream) survives unmolested.
-
-  * @pu connect \<name\>@ — used verbatim when the host string
-    starts with that literal prefix. The @pu@ incus client accepts
-    the same "command-prefix + quoted argv" shape as @ssh@, so a
-    host configured as @"pu connect builder-mac"@ in
-    @~\/.config\/ci\/hosts.json@ Just Works as a drop-in.
-
-Detection is by exact prefix because the alternative ("anything
-with spaces in it") is too permissive — @user\@host@ forms with
-embedded options like @"-p 2222 builder"@ are plausible future SSH
-variants and shouldn't be misclassified.
+{- | The shell-tokens prefix that runs a command on this 'Host':
+@ssh -T \<host\>@. @-T@ suppresses TTY allocation so the binary
+stdin (the @git bundle@ stream) survives unmolested. Anything the
+local @ssh@ config knows how to dial — bare @hostname@,
+@user\@host@, an alias from @~\/.ssh\/config@ — works as the host
+string.
 -}
 remoteRunner :: Host -> Text
-remoteRunner host
-    | "pu connect " `T.isPrefixOf` h = h
-    | otherwise = "ssh -T " <> h
-  where
-    h = display host
+remoteRunner host = "ssh -T " <> display host
 
 {- | The full remote wrapper for one recipe execution. The shape:
 

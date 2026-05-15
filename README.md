@@ -49,20 +49,9 @@ The pipeline's fanout = (root recipe's OS families × configured systems matchin
 
 **Local platform override.** An entry for the *local* system takes precedence over inline execution: configure `"x86_64-linux": "pu connect srid1"` from an x86_64-linux host and the linux lane routes through `pu` instead of running in the worktree. The path for exercising remote runners (or testing failure modes) without leaving the local box.
 
-The remote host needs `nix`, `git`, and any tools the recipes themselves use available on its PATH. `just` does *not* need to be pre-installed — the runner ships its closure via `nix-store --export | <runner> nix-store --import` on same-arch remotes; cross-arch falls back to the remote's `just` on PATH (or to a future drv-realise from the remote's own substituter).
+The remote host needs `nix`, `git`, and any tools the recipes themselves use available on its PATH. **`just` does not need to be pre-installed** — the runner ships the target-platform `just` *derivation* (a small file of build metadata) via `nix-store --export | ssh <host> nix-store --import`, then the remote `nix-store --realise`s it. The remote's substituter chain (typically `cache.nixos.org`) fetches the natively-built binary for its own arch, so the linux runner never tries to execute a darwin binary and vice versa.
 
-#### Incus / `pu connect` runners
-
-Hosts spelled as `pu connect <name>` in the config are routed through the `pu` incus client instead of `ssh`. The remote-command shape is identical (the prefix already names the runner+target), so a host configured as `"aarch64-darwin": "pu connect mac-vm"` Just Works as a drop-in:
-
-```json
-{
-  "x86_64-linux": "builder.example.com",
-  "aarch64-darwin": "pu connect mac-vm"
-}
-```
-
-Detection is by exact `pu connect ` prefix — anything else falls through to `ssh -T <host>`.
+Host strings are whatever `ssh` knows how to dial — bare `hostname`, `user@host`, an alias from `~/.ssh/config`. Incus instances are reached via an ssh-config alias that names them; no special-case client at the runner layer.
 
 ### Cross-lane failure tolerance
 

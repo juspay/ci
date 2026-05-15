@@ -24,15 +24,8 @@ spec = do
         it "wraps a user@host form in `ssh -T`" $
             remoteRunner (hostFromText "srid@builder.example.com") `shouldBe` "ssh -T srid@builder.example.com"
 
-        it "uses a `pu connect <name>` host verbatim, no ssh prefix" $
-            remoteRunner (hostFromText "pu connect builder-mac") `shouldBe` "pu connect builder-mac"
-
-        it "preserves trailing args inside the pu prefix" $
-            remoteRunner (hostFromText "pu connect mybox --some-flag")
-                `shouldBe` "pu connect mybox --some-flag"
-
-        it "does not treat a similar-looking prefix as pu (must be the exact `pu connect ` token)" $
-            remoteRunner (hostFromText "pulse-host") `shouldBe` "ssh -T pulse-host"
+        it "treats an ssh-config alias the same — anything ssh dials works" $
+            remoteRunner (hostFromText "srid1") `shouldBe` "ssh -T srid1"
 
     describe "commandFor (Ssh ... targetPlat)" $ do
         let host = hostFromText "remote.example.com"
