@@ -221,6 +221,17 @@ ignored by ssh, so the worktree pin would be a misleading
 no-op in the emitted YAML. They get 'Nothing' regardless of
 mode; user recipes get 'Just worktreePath' in 'StrictRun' and
 'Nothing' elsewhere.
+
+The log-location callback intentionally does *not* filter setup
+nodes the way 'CI.CommitStatus' and 'CI.Verdict' do for their
+user-facing surfaces. The reporting filter exists so the PR
+author doesn't see internal plumbing on their checks page or
+in the summary line; the log file exists for debugging when
+setup *fails*. Hiding setup-node output would leave a failed
+bundle ship or drv copy with nowhere to look. The two policies
+("user-facing report" vs "debug log on disk") differ
+deliberately — same predicate, different consumers, different
+visibility goals.
 -}
 yamlPathsFor :: RunMode -> (NodeId -> Maybe FilePath, NodeId -> Maybe FilePath)
 yamlPathsFor (StrictRun wt ld) = (workingDirFor wt, Just . logPathFor ld)
