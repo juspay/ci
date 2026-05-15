@@ -109,9 +109,15 @@ remoteCommand host sha targetPlat recipe =
     T.intercalate " && " (drvCopyStep : setupSteps)
         <> "; "
         <> r
+        -- @head -n1@: 'just' is a multi-output derivation (out, man,
+        -- doc) and @nix-store --realise@ prints every output path on
+        -- its own line. The main @out@ output is first; taking just
+        -- that line avoids shell-splitting the rest into stray argv
+        -- positions where one of them (a directory) would otherwise
+        -- error "Is a directory".
         <> " \"cd $T/src && \\$(nix-store --realise "
         <> T.pack drv
-        <> ")/bin/just --no-deps "
+        <> " | head -n1)/bin/just --no-deps "
         <> display recipe
         <> "\"; rc=$?; "
         <> r
