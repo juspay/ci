@@ -21,7 +21,8 @@ prefix uses the @pu@ incus client verbatim instead. See
 'remoteRunner'.
 -}
 module CI.Transport (
-    Transport (..),
+    Transport (Local),
+    sshTransport,
     commandFor,
     remoteRunner,
 )
@@ -38,9 +39,9 @@ import Data.Text.Display (display)
 {- | Where a node runs. 'Local' means the spawning process-compose
 already @chdir@'d into the pinned worktree (see
 'CI.Pipeline.RunMode') so the @just@ subprocess inherits the
-right cwd; @Ssh host sha localPlat targetPlat@ means the command
-is a wrapper that bundles HEAD to @host@, clones it there, checks
-out @sha@, and runs @just@ in that remote checkout.
+right cwd; the @Ssh@ form means the command is a wrapper that
+bundles HEAD to a host, clones it there, checks out a pinned
+'Sha', and runs @just@ in that remote checkout.
 
 The 'Sha' rides inside 'Ssh' (not as a separate parameter) because
 it's only meaningful on the SSH path — a local node runs against
@@ -53,14 +54,29 @@ Despite the name, @Ssh@ also covers incus-style runners spelled as
 *kind* of execution (remote, SSH-shaped command-prefix), not the
 literal binary. See 'remoteRunner'.
 
-The two 'Platform's (runner-local and target) let this module
-derive the arch-compatibility decision internally: callers hand
-over both platforms and Transport classifies them via
-'archKindFor'. That keeps arch semantics — "can we nix-copy our
-@just@ closure to this remote?" — encapsulated here rather than
-spread across the caller and the @sshCommand@ shape.
+The 'Ssh' constructor is intentionally not exported: callers build
+remote transports via 'sshTransport', which takes runner-local and
+target 'Platform's and resolves them to an 'ArchKind' at
+construction. That keeps arch semantics — "can we nix-copy our
+@just@ closure to this remote?" — encapsulated here, and keeps the
+'Ssh' field a single classified value rather than two
+positionally-ambiguous 'Platform's that every pattern match would
+have to re-classify.
 -}
-data Transport = Local | Ssh Host Sha Platform Platform
+data Transport = Local | Ssh Host Sha ArchKind
+
+{- | Smart constructor for the SSH transport: takes the runner-local
+and target platforms and classifies them into an 'ArchKind' here,
+so the resulting 'Transport' value carries the *decision*
+(native-vs-foreign) rather than the *inputs* the decision was
+made from. A future arch refinement (e.g. distinguishing
+x86_64-linux from aarch64-linux within one 'Platform') changes
+this function's signature and 'archKindFor', without rippling
+through the 'Ssh' field shape or its pattern-match sites.
+-}
+sshTransport :: Host -> Sha -> Platform -> Platform -> Transport
+sshTransport host sha localPlat targetPlat =
+    Ssh host sha (archKindFor localPlat targetPlat)
 
 {- | Whether the remote can execute binaries from the runner's own
 @\/nix\/store@.
@@ -75,12 +91,12 @@ data Transport = Local | Ssh Host Sha Platform Platform
     a darwin remote). Our local binary won't run there, so we skip
     the closure-copy and invoke @just@ from the remote's PATH.
 
-Module-private: callers hand 'commandFor' the two 'Platform's
-('Ssh''s third and fourth fields) and 'archKindFor' produces the
-'ArchKind' here. The classifier lives next to the consumer so a
-refinement of arch detection (e.g. distinguishing x86_64-linux
-from aarch64-linux within one 'Platform') touches this module
-only.
+Module-private: callers use 'sshTransport' to build an 'Ssh'
+transport from two 'Platform's, and 'archKindFor' produces the
+'ArchKind' stored in the constructor. The classifier lives next
+to the consumer so a refinement of arch detection (e.g.
+distinguishing x86_64-linux from aarch64-linux within one
+'Platform') touches this module only.
 -}
 data ArchKind = NativeArch | ForeignArch
 
@@ -102,8 +118,7 @@ nodes emit the three-call bundle+clone+run dance against
 -}
 commandFor :: Transport -> RecipeName -> Text
 commandFor Local r = recipeCommand r
-commandFor (Ssh host sha localPlat targetPlat) r =
-    sshCommand host sha r (archKindFor localPlat targetPlat)
+commandFor (Ssh host sha arch) r = sshCommand host sha r arch
 
 {- | The shell-tokens prefix that runs a command on this 'Host'.
 Two flavours:

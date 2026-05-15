@@ -12,7 +12,7 @@ module CI.TransportSpec (spec) where
 import CI.Git (shaPlaceholder)
 import CI.Hosts (hostFromText)
 import CI.Platform (Platform (..))
-import CI.Transport (Transport (..), commandFor, remoteRunner)
+import CI.Transport (commandFor, remoteRunner, sshTransport)
 import qualified Data.Text as T
 import Test.Hspec
 
@@ -39,16 +39,17 @@ spec = do
             -- through to ssh.
             remoteRunner (hostFromText "pulse-host") `shouldBe` "ssh -T pulse-host"
 
-    describe "commandFor (Ssh ... localPlat targetPlat)" $ do
+    describe "commandFor (sshTransport ... localPlat targetPlat)" $ do
         let host = hostFromText "remote.example.com"
             sha = shaPlaceholder
             recipe = "ci::build"
-            -- Same-platform pair: Transport classifies as NativeArch
-            -- internally and emits the closure-copy + absolute-path shape.
-            native = commandFor (Ssh host sha Linux Linux) recipe
-            -- Cross-platform pair: Transport classifies as ForeignArch
-            -- internally and skips the closure-copy step.
-            foreign_ = commandFor (Ssh host sha Linux Macos) recipe
+            -- Same-platform pair: sshTransport classifies as NativeArch
+            -- at construction; commandFor emits the closure-copy +
+            -- absolute-path shape.
+            native = commandFor (sshTransport host sha Linux Linux) recipe
+            -- Cross-platform pair: sshTransport classifies as ForeignArch
+            -- at construction; commandFor skips the closure-copy step.
+            foreign_ = commandFor (sshTransport host sha Linux Macos) recipe
 
         it "same-platform target prepends a `nix-store --export | runner nix-store --import` step" $
             ("nix-store --export" `T.isInfixOf` native) `shouldBe` True

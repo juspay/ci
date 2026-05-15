@@ -29,7 +29,7 @@ import CI.Platform (Platform, localPlatform, osToPlatform)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
 import CI.Root (findRoot)
-import CI.Transport (Transport (..), commandFor)
+import CI.Transport (Transport (Local), commandFor, sshTransport)
 import CI.Verdict (exitWithVerdict, newOutcomes, recordOutcome)
 import Control.Concurrent.Async (link, wait, withAsync)
 import Control.Monad (foldM, void)
@@ -392,9 +392,11 @@ commandForNode remoteLaneState localPlat hosts node = case lookupHost node.platf
             commandFor (ssh (hostFromText "<unconfigured>") shaPlaceholder) node.recipe
         | otherwise -> hostContractError
   where
-    -- Hand 'CI.Transport' both platforms; arch classification lives
-    -- there, next to the consumer that varies on it.
-    ssh h sha = Ssh h sha localPlat node.platform
+    -- Hand 'CI.Transport' both platforms via the smart constructor;
+    -- arch classification lives there, next to the consumer that
+    -- varies on it, and the resulting 'Transport' value carries
+    -- the decision rather than the raw classifier inputs.
+    ssh h sha = sshTransport h sha localPlat node.platform
     hostContractError =
         error $
             "internal error: no SSH host for "
