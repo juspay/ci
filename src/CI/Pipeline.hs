@@ -275,7 +275,8 @@ yamlPathsFor (StrictRun wt ld) = (workingDirFor wt, Just . logPathFor ld)
   where
     workingDirFor _ (SetupNode _) = Nothing
     workingDirFor w (RecipeNode _ _) = Just w
-yamlPathsFor _ = (const Nothing, const Nothing)
+yamlPathsFor LocalRun = (const Nothing, const Nothing)
+yamlPathsFor DumpRun = (const Nothing, const Nothing)
 
 -- | Walk @just --dump@ → root → reachable subgraph → topologically
 -- lowered DAG → fan out across the pipeline's platform set →
