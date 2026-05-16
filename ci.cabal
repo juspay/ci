@@ -13,13 +13,18 @@ library
                       CI.Gh
                       CI.Git
                       CI.Graph
+                      CI.Hosts
                       CI.Justfile
                       CI.LogPath
+                      CI.Nix
+                      CI.Node
                       CI.Pipeline
+                      CI.Platform
                       CI.ProcessCompose
                       CI.ProcessCompose.Events
                       CI.Root
                       CI.Subprocess
+                      CI.Transport
                       CI.Verdict
     build-depends:
         , aeson
@@ -32,6 +37,8 @@ library
         , filepath
         , network
         , process
+        , template-haskell
+        , th-env
         , text
         , text-display
         , time
@@ -58,7 +65,10 @@ test-suite ci-test
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
     other-modules:    CI.JustfileSpec
+                      CI.NodeSpec
+                      CI.PlatformSpec
                       CI.ProcessComposeSpec
+                      CI.TransportSpec
                       CI.VerdictSpec
     build-depends:
         , algebraic-graphs

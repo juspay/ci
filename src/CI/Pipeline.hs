@@ -6,29 +6,49 @@
 -- "Main" is the dispatch layer; everything mode-specific or orchestration-
 -- shaped lives here.
 module CI.Pipeline
-  ( RunDir (..),
-    RunMode (..),
+  ( -- * Runtime artifact layout
+    RunDir (..),
     ensureRunDir,
+
+    -- * Run modes
     runLocal,
     runStrict,
+    runGraph,
+    runDumpYaml,
+
+    -- * Pipeline assembly
+    RunMode (..),
     buildProcessCompose,
   )
 where
 
+import qualified Algebra.Graph.AdjacencyMap as G
 import CI.CommitStatus (postStatusFor, seedPending)
 import CI.Gh (viewRepo)
-import CI.Git (ensureCleanTree, resolveSha, withSnapshotWorktree)
+import CI.Git (Sha, ensureCleanTree, resolveSha, shaPlaceholder, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
-import CI.Justfile (fetchDump, recipeCommand)
-import CI.LogPath (logDirFor, logPathFor)
-import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
-import CI.ProcessCompose.Events (ProcessState, subscribeStates)
+import CI.Hosts (Hosts, hostsPlatforms, loadHosts, lookupHost)
+import CI.Justfile (Attribute (..), Recipe (..), RecipeName, fetchDump, recipeCommand)
+import qualified CI.Justfile as J
+import CI.LogPath (logDirFor, logPathFor, platformDir)
+import CI.Node (NodeId (..), nodePlatform, parseNodeId, toMermaid)
+import CI.Platform (Platform, localPlatform, platformOs)
+import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processGraph, processNames, runProcessCompose, toProcessCompose)
+import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
 import CI.Root (findRoot)
+import CI.Transport (sshRecipeCommand, sshSetupCommand)
 import CI.Verdict (exitWithVerdict, newOutcomes, recordOutcome)
 import Control.Concurrent.Async (link, wait, withAsync)
 import Control.Monad (void)
+import qualified Data.ByteString as BS
+import Data.Foldable (for_)
+import Data.List (nub)
+import qualified Data.Map.Strict as Map
+import Data.Maybe (isJust)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
+import qualified Data.Text.IO as TIO
+import qualified Data.Yaml as Y
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.Exit (die)
 import System.FilePath ((</>))
@@ -40,7 +60,8 @@ import System.FilePath ((</>))
 data RunDir = RunDir
   { worktreePath :: FilePath,
     sock :: FilePath,
-    pcLog :: FilePath
+    pcLog :: FilePath,
+    pcYaml :: FilePath
   }
 
 -- | Create @\$PWD\/.ci\/@ (if missing) and return the canonical sub-paths.
@@ -55,7 +76,8 @@ ensureRunDir = do
     RunDir
       { worktreePath = dir </> "worktree",
         sock = dir </> "pc.sock",
-        pcLog = dir </> "pc.log"
+        pcLog = dir </> "pc.log",
+        pcYaml = dir </> "pc.yaml"
       }
 
 -- | Local mode: live working tree, no GitHub status posts, no per-recipe
@@ -65,26 +87,38 @@ ensureRunDir = do
 -- @.ci\/pc.log@ so even local runs don't leak into @\$TMPDIR@; the same
 -- UDS at @.ci\/pc.sock@ is bound so the API surface is available for
 -- future consumers (e.g. an MCP server).
-runLocal :: RunDir -> [String] -> IO ()
-runLocal dirs passthrough = do
-  pc <- buildProcessCompose LocalRun
+--
+-- SSH lanes are supported in local mode too: any non-local platform
+-- in the pipeline requires a @~\/.config\/ci\/hosts.json@ entry (the
+-- user opts in by editing the file; missing entries are excluded
+-- from the fanout by 'pipelinePlatformsFor'). Each remote lane gets
+-- an SSH-shaped @command@ that bundles @HEAD@ across rather than
+-- the dirty live tree — the dev's uncommitted work is intentionally
+-- invisible to remote lanes; the bundle reflects committed history
+-- only.
+runLocal :: RunDir -> Bool -> [String] -> IO ()
+runLocal dirs tui passthrough = do
+  hosts <- dieOnLeft =<< loadHosts
+  pc <- buildProcessCompose hosts LocalRun
   outcomes <- newOutcomes (processNames pc)
-  withObserver dirs.sock (recordOutcome outcomes) $
+  let onState ps = withParsedNode ps $ \node -> recordOutcome outcomes node ps
+  withObserver dirs.sock onState $
     void $
-      runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
-  exitWithVerdict outcomes
+      runProcessCompose (UpInvocation dirs.sock dirs.pcLog dirs.pcYaml tui passthrough) pc
+  exitWithVerdict (hostFor hosts) outcomes
 
 -- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
 -- via @git worktree@ at @.ci\/worktree@ → start process-compose with its
 -- API on @.ci\/pc.sock@ → subscribe to state events, post commit
--- statuses, and accumulate the per-recipe outcome map concurrently
--- with the pipeline run.
+-- statuses, and accumulate the per-node outcome map concurrently with
+-- the pipeline run.
 --
--- Per-recipe stdout/stderr is split into @.ci\/\<sha\>\/\<recipe\>.log@
--- (created here before process-compose spawns) so each GitHub commit
--- status can carry a navigable path to the matching log. The SHA-keyed
--- directory keeps history across runs: a green-then-red sequence on the
--- same checkout leaves both runs' logs side-by-side under @.ci\/@.
+-- Per-node stdout/stderr is split into
+-- @.ci\/\<sha\>\/\<platform\>\/\<recipe\>.log@ (created here before
+-- process-compose spawns) so each GitHub commit status can carry a
+-- navigable path to the matching log. The SHA-keyed directory keeps
+-- history across runs: a green-then-red sequence on the same checkout
+-- leaves both runs' logs side-by-side under @.ci\/@.
 --
 -- The two consumers of the state stream — 'postStatusFor' (GitHub
 -- write) and 'recordOutcome' (local accumulator) — are composed at
@@ -92,30 +126,83 @@ runLocal dirs passthrough = do
 -- the GH-posting code. Both share
 -- 'CI.ProcessCompose.Events.psToTerminalStatus' as the underlying
 -- terminal-state classifier, so the GH check page and the local
--- verdict agree on which recipes succeeded.
+-- verdict agree on which nodes succeeded.
 --
 -- Process-compose's own exit code is intentionally ignored — with
 -- @restart: no@ on every process it no longer reflects pipeline
--- outcome (a failed recipe leaves pc exiting 0). The accumulated
+-- outcome (a failed node leaves pc exiting 0). The accumulated
 -- outcome map is the source of truth; 'exitWithVerdict' derives the
 -- final 'ExitCode' from it.
-runStrict :: RunDir -> [String] -> IO ()
-runStrict dirs passthrough = do
+runStrict :: RunDir -> Bool -> [String] -> IO ()
+runStrict dirs tui passthrough = do
   dieOnLeft =<< ensureCleanTree
   repo <- dieOnLeft =<< viewRepo
   sha <- dieOnLeft =<< resolveSha
+  hosts <- dieOnLeft =<< loadHosts
   let logDir = logDirFor sha
   withSnapshotWorktree dirs.worktreePath $ do
-    createDirectoryIfMissing True logDir
-    pc <- buildProcessCompose $ StrictRun dirs.worktreePath logDir
-    let recipes = processNames pc
-    seedPending repo sha logDir recipes
-    outcomes <- newOutcomes recipes
-    let onState ps = postStatusFor repo sha logDir ps >> recordOutcome outcomes ps
+    pc <- buildProcessCompose hosts $ StrictRun dirs.worktreePath logDir
+    let nodes = processNames pc
+    createPlatformDirs logDir nodes
+    seedPending repo sha logDir nodes
+    outcomes <- newOutcomes nodes
+    let onState ps = withParsedNode ps $ \node ->
+          postStatusFor repo sha logDir node ps
+            >> recordOutcome outcomes node ps
     withObserver dirs.sock onState $
       void $
-        runProcessCompose (UpInvocation dirs.sock dirs.pcLog passthrough) pc
-    exitWithVerdict outcomes
+        runProcessCompose (UpInvocation dirs.sock dirs.pcLog dirs.pcYaml tui passthrough) pc
+    exitWithVerdict (hostFor hosts) outcomes
+
+-- | Print the assembled pipeline's dependency graph to stdout in
+-- Mermaid @flowchart@ syntax. Uses the same 'DumpRun' shape
+-- @dump-yaml@ uses, so the rendered graph reflects the full fanout
+-- without prompting for hosts or shelling out to git.
+--
+-- Pc's own @process-compose graph@ subcommand is server-only — it
+-- queries a running pc instance over HTTP/UDS rather than reading a
+-- YAML file — so it can't render the graph standalone. Emitting
+-- Mermaid here keeps the command useful outside a live run; pipe
+-- through @mermaid-ascii@ (or paste into <https://mermaid.live>) to
+-- visualise.
+--
+-- Read-only: 'ci graph' must not create @.ci\/@ as a side effect.
+-- That's why this takes no 'RunDir' — only 'runLocal' and
+-- 'runStrict' need the runtime-artifact paths.
+runGraph :: IO ()
+runGraph = do
+  hosts <- dieOnLeft =<< loadHosts
+  pc <- buildProcessCompose hosts DumpRun
+  TIO.putStrLn (toMermaid (processGraph pc))
+
+-- | Emit the assembled process-compose YAML to stdout. Uses 'DumpRun'
+-- mode so no host resolution side-effects occur — safe to invoke
+-- offline, outside a git checkout, or from a remote whose
+-- @hosts.json@ has no entry for the other platform.
+runDumpYaml :: IO ()
+runDumpYaml = do
+  hosts <- dieOnLeft =<< loadHosts
+  pc <- buildProcessCompose hosts DumpRun
+  BS.putStr (Y.encode pc)
+
+-- | Materialise every @.ci\/\<sha\>\/\<platform\>\/@ subdirectory the
+-- pipeline will route logs to, before process-compose spawns. pc
+-- creates the per-recipe log *file* itself but won't create
+-- intermediate directories — without this the first event for a
+-- platform whose subdir doesn't exist fails the spawn.
+createPlatformDirs :: FilePath -> [NodeId] -> IO ()
+createPlatformDirs logDir nodes =
+  mapM_ (createDirectoryIfMissing True . platformDir logDir) (nub (nodePlatform <$> nodes))
+
+-- | Enforce the wire-event-identity invariant at the single site that
+-- owns it: parse @ps.name@ as a 'NodeId' and run @action@ only if it
+-- names a node we scheduled. Both observers ('postStatusFor' and
+-- 'recordOutcome') consume the resulting parsed 'NodeId', so the
+-- drop-on-unparseable policy is decided once here instead of being
+-- re-decided in each downstream module. The name signals the
+-- parse/filter responsibility — this is the gate, not a bare iteration.
+withParsedNode :: ProcessState -> (NodeId -> IO ()) -> IO ()
+withParsedNode ps action = for_ (parseNodeId ps.name) action
 
 -- | Bracket @body@ between a 'subscribeStates' subscription on @sock@
 -- and a clean @wait@ on it: spawn the observer, 'link' so its crash
@@ -134,7 +221,7 @@ withObserver sockP onState body =
 -- | The two pipeline-build modes. 'LocalRun' is the @dev@ / @dump-yaml@
 -- shape: no worktree pin, no per-recipe log routing. 'StrictRun'
 -- carries the two paths that always travel together — the @git
--- worktree@ snapshot every recipe @chdir@s into, and the
+-- worktree@ snapshot every local recipe @chdir@s into, and the
 -- @.ci\/\<sha\>\/@ log directory the YAML emitter routes each
 -- process's stdout/stderr to. A sum type instead of two parallel
 -- @Maybe FilePath@s rules out the mixed @(Just, Nothing)@ /
@@ -143,25 +230,233 @@ data RunMode
   = LocalRun
   | -- | @StrictRun worktreeDir logDir@.
     StrictRun FilePath FilePath
+  | -- | YAML-inspection mode for @dump-yaml@: no working dir, no log
+    --       routing, and (importantly) no host resolution side effects.
+    --       Missing 'CI.Hosts.Host' entries are tolerated; SSH-lane
+    --       commands render with a placeholder so the structural keys
+    --       (process names, depends_on edges) still reflect the real
+    --       fanout. Used by the macos remote's smoke test where stdin is
+    --       closed and prompting would deadlock.
+    DumpRun
+
+-- | The two YAML-shape projections of 'RunMode': the per-node working
+-- directory every recipe @chdir@s into, and the per-node log location
+-- the YAML emitter routes stdout/stderr to. Both vary together across
+-- modes — 'StrictRun' supplies both; 'LocalRun' and 'DumpRun' supply
+-- neither — so they live in a single 'RunMode'-pattern-match rather
+-- than two parallel where-clauses that have to stay in lockstep
+-- across future 'RunMode' constructors.
+--
+-- The working-dir callback opts setup nodes out of the worktree pin:
+-- they're @ssh -T \<host\>@ launcher processes whose local cwd is
+-- ignored by ssh, so 'Just worktreePath' would be a misleading no-op
+-- in the emitted YAML. The setup-vs-recipe choice is now structural
+-- ('NodeId' pattern match), not a name-based predicate.
+--
+-- The log-location callback intentionally does *not* skip setup nodes
+-- the way 'CI.CommitStatus' and 'CI.Verdict' do for their user-facing
+-- surfaces. The reporting filter exists so the PR author doesn't see
+-- internal plumbing on their checks page or in the summary line; the
+-- log file exists for debugging when setup *fails*. Hiding setup-node
+-- output would leave a failed bundle ship or drv copy with nowhere to
+-- look. Same predicate, different consumers, different visibility
+-- goals.
+yamlPathsFor :: RunMode -> (NodeId -> Maybe FilePath, NodeId -> Maybe FilePath)
+yamlPathsFor (StrictRun wt ld) = (workingDirFor wt, Just . logPathFor ld)
+  where
+    workingDirFor _ (SetupNode _) = Nothing
+    workingDirFor w (RecipeNode _ _) = Just w
+yamlPathsFor LocalRun = (const Nothing, const Nothing)
+yamlPathsFor DumpRun = (const Nothing, const Nothing)
 
 -- | Walk @just --dump@ → root → reachable subgraph → topologically
--- lowered DAG → 'ProcessCompose' YAML, parameterised by the run mode.
--- The two per-process knobs ('workingDir' and 'logLocation') each
--- pattern-match on 'RunMode' directly — the sum-type discipline reaches
--- the YAML emitter rather than being unpacked into a @(Maybe, Maybe)@
--- pair one line up.
-buildProcessCompose :: RunMode -> IO ProcessCompose
-buildProcessCompose mode = do
+-- lowered DAG → fan out across the pipeline's platform set →
+-- 'ProcessCompose' YAML. Platform discovery, host resolution, and
+-- transport selection all happen here so the YAML emitter
+-- ("CI.ProcessCompose") stays a dumb encoder.
+--
+--  * Pipeline platforms come from the root recipe's OS attributes
+--    (@[linux] [macos] [metadata(\"ci\")] root:@). A root with no
+--    OS attrs defaults to the local platform only.
+--
+--  * Host resolution loads @~\/.config\/ci\/hosts.json@ once.
+--    'pipelinePlatformsFor' silently excludes platforms with no
+--    entry from the fanout, so a missing host is never a runtime
+--    failure — the user opts in by editing the file.
+--
+--  * Each fanned-out 'NodeId' gets a 'Local' or @Ssh host@ transport
+--    depending on whether its platform matches the runner's; the
+--    'CI.Transport.commandFor' rendering is the only site that knows
+--    SSH command shapes.
+buildProcessCompose :: Hosts -> RunMode -> IO ProcessCompose
+buildProcessCompose hosts mode = do
   recipes <- dieOnLeft =<< fetchDump
-  root <- dieOnLeft $ findRoot recipes
-  reachable <- dieOnLeft $ reachableSubgraph root recipes
-  graph <- dieOnLeft $ lowerToRunnerGraph reachable
-  pure $ toProcessCompose (workingDir mode) recipeCommand (logLocation mode) graph
+  rootName <- dieOnLeft $ findRoot recipes
+  rootRecipe <- case Map.lookup rootName recipes of
+    Just r -> pure r
+    -- findRoot guarantees this; the lookup is defensive.
+    Nothing -> die $ "internal error: root " <> T.unpack (display rootName) <> " missing from recipe map"
+  reachable <- dieOnLeft $ reachableSubgraph rootName recipes
+  recipeGraph <- dieOnLeft $ lowerToRunnerGraph reachable
+  localPlat <- dieOnLeft localPlatform
+  let pipelinePlatforms = pipelinePlatformsFor rootRecipe localPlat hosts
+  case pipelinePlatforms of
+    [] ->
+      die $
+        "root recipe declares OS attrs but no matching system is configured. "
+          <> "Either remove the OS attrs from "
+          <> T.unpack (display rootName)
+          <> " or add an entry to ~/.config/ci/hosts.json for one of: "
+          <> unwords (show <$> rootOsFamilies rootRecipe)
+    _ -> pure ()
+  let nodeGraph = fanOut localPlat hosts pipelinePlatforms recipeGraph
+      -- Same predicate 'fanOut' uses to decide where to emit setup
+      -- nodes — sourcing both from one definition avoids the dormant
+      -- divergence risk of two near-identical "is this platform
+      -- remote?" predicates.
+      hasRemote = any (\p -> isRemote p (localPlat, hosts)) pipelinePlatforms
+  -- A Sha is needed iff at least one remote lane is fanned out
+  -- (setup nodes ship a bundle that gets @git checkout@'d on the
+  -- remote at this SHA). @DumpRun@ uses 'shaPlaceholder' so
+  -- inspection works outside a git checkout; non-remote local runs
+  -- also use the placeholder (never consumed — the graph has no
+  -- nodes that read it).
+  sha <- case mode of
+    DumpRun -> pure shaPlaceholder
+    _ | hasRemote -> dieOnLeft =<< resolveSha
+    _ -> pure shaPlaceholder
+  let mkCommand = commandForNode sha localPlat hosts
+      (yamlWorkingDir, yamlLogLocation) = yamlPathsFor mode
+  pure $ toProcessCompose mkCommand yamlWorkingDir yamlLogLocation nodeGraph
+
+-- | The pipeline's platform set: the intersection of (the root
+-- recipe's declared OS families) with (the systems we have either a
+-- hosts.json entry for OR are running on locally).
+--
+--   * Root @[linux] [macos]@ + local @x86_64-linux@ + hosts.json
+--     @{aarch64-darwin: ...}@ → @{x86_64-linux, aarch64-darwin}@.
+--   * Root @[linux]@ + local @x86_64-linux@ + empty hosts.json →
+--     @{x86_64-linux}@ (local-only, no macos).
+--   * Root with no OS attrs → @{localPlat}@ (single-host shape,
+--     same as before fanout existed).
+--
+-- A system in @hosts.json@ whose OS family doesn't appear in the root
+-- attributes is silently ignored — the user opts in by adding the OS
+-- attribute to the root. Symmetrically, an OS family in the root that
+-- matches no configured system is silently empty for that family —
+-- the user opts in by adding an entry to @hosts.json@.
+pipelinePlatformsFor :: Recipe -> Platform -> Hosts -> [Platform]
+pipelinePlatformsFor root localPlat hosts =
+  let configured = nub (localPlat : hostsPlatforms hosts)
+   in case rootOsFamilies root of
+        [] -> [localPlat]
+        oss -> filter (\p -> platformOs p `elem` oss) configured
+
+-- | The OS-family attributes declared on a recipe ('[linux]',
+-- '[macos]', etc.), as a plain list. Used both by
+-- 'pipelinePlatformsFor' (to compute the fanout set) and by the
+-- empty-fanout error in 'buildProcessCompose' (to tell the user
+-- which families couldn't be satisfied).
+rootOsFamilies :: Recipe -> [J.Os]
+rootOsFamilies r = [o | Os o <- r.attributes]
+
+-- | Cross-product the recipe DAG with the pipeline's platform set:
+-- one 'NodeId' per @(recipe, platform)@, edges replicated
+-- lane-by-lane with no cross-platform connections. Each remote
+-- platform also gets a synthetic @_ci-setup\@\<platform\>@ node;
+-- every recipe node on that platform @depends_on@ it. The setup
+-- node ships the @just@ derivation + a fresh @git bundle@ once per
+-- remote per run; recipe nodes reuse the cached checkout.
+--
+-- Platforms that route inline ('localPlat' with no hosts entry)
+-- don't need a setup node — there's no bundle to ship, no remote
+-- clone to coordinate.
+--
+-- Lanes run independently; a failure on linux doesn't block macos
+-- and vice versa (and the cross-lane failure tolerance
+-- @restart: no@ / @exit_on_skipped: false@ in 'CI.ProcessCompose'
+-- carries that through).
+fanOut :: Platform -> Hosts -> [Platform] -> G.AdjacencyMap RecipeName -> G.AdjacencyMap NodeId
+fanOut localPlat hosts platforms g =
+  recipeVertices
+    `G.overlay` G.edges recipeEdges
+    `G.overlay` G.vertices setupVertices
+    `G.overlay` G.edges setupEdges
   where
-    workingDir LocalRun = Nothing
-    workingDir (StrictRun wt _) = Just wt
-    logLocation LocalRun = const Nothing
-    logLocation (StrictRun _ ld) = Just . logPathFor ld
+    recipeVertices = G.vertices [RecipeNode r p | r <- G.vertexList g, p <- platforms]
+    recipeEdges = [(RecipeNode r p, RecipeNode d p) | (r, d) <- G.edgeList g, p <- platforms]
+    -- Remote platforms: anything with a hosts entry runs over SSH.
+    -- A local platform with a hosts entry counts as remote (the
+    -- host-override case).
+    remotePlatforms = filter (`isRemote` (localPlat, hosts)) platforms
+    setupVertices = [SetupNode p | p <- remotePlatforms]
+    -- Every recipe node on a remote platform depends on that
+    -- platform's setup node.
+    setupEdges =
+      [ (RecipeNode r p, SetupNode p)
+      | r <- G.vertexList g,
+        p <- remotePlatforms
+      ]
+
+-- | A platform routes through SSH if it has a hosts.json entry, or
+-- if it isn't the local platform (the latter shouldn't happen post-
+-- 'pipelinePlatformsFor' filtering, but the check is cheap and
+-- explicit).
+isRemote :: Platform -> (Platform, Hosts) -> Bool
+isRemote p (localPlat, hosts) =
+  isJust (lookupHost p hosts) || p /= localPlat
+
+-- | Per-node command construction. Dispatches over (host lookup,
+-- node kind) and picks one of the three valid command builders in
+-- 'CI.Transport'. The "(Local, SetupNode)" combination is
+-- structurally absent — there is no @localSetupCommand@ — so the
+-- match is total over the cases the fanout actually produces:
+--
+--   * @(RecipeNode, no host, local platform)@ → 'CI.Justfile.recipeCommand'
+--   * @(RecipeNode, host)@                    → 'sshRecipeCommand'
+--   * @(SetupNode, host)@                     → 'sshSetupCommand'
+--
+-- @sha@ is consumed only by the SSH builders. Local-mode runs
+-- without remote lanes pass 'shaPlaceholder' as a no-op (never
+-- read — the graph has no SSH nodes).
+commandForNode :: Sha -> Platform -> Hosts -> NodeId -> T.Text
+commandForNode sha localPlat hosts node = case (node, lookupHost plat hosts) of
+  (RecipeNode r _, Nothing)
+    | plat == localPlat -> recipeCommand r
+    | otherwise -> hostContractError
+  (RecipeNode r _, Just h) -> sshRecipeCommand h sha plat r
+  (SetupNode _, Just h) -> sshSetupCommand h sha plat
+  -- 'fanOut' emits setup nodes only for platforms with a hosts entry,
+  -- so this branch is unreachable given the invariants. Surface a
+  -- contract error rather than make it a 'commandFor' input shape.
+  (SetupNode _, Nothing) -> setupOnLocalError
+  where
+    plat = nodePlatform node
+    hostContractError =
+      error $
+        "internal error: no SSH host for "
+          <> T.unpack (display plat)
+          <> " (pipelinePlatformsFor should have excluded this)"
+    setupOnLocalError =
+      error $
+        "internal error: SetupNode for "
+          <> T.unpack (display plat)
+          <> " with no hosts entry (fanOut emits setup only for remote platforms)"
+
+-- | The @NodeId -> host-label@ resolver the verdict summary prints.
+-- Pure: closes over an already-loaded 'Hosts' so the caller controls
+-- how many times the JSON is parsed (once, at the top of
+-- 'runLocal' / 'runStrict' / 'runGraph'). Nodes whose platform has
+-- an entry render as that host; nodes without an entry render as
+-- @"local"@ (the orchestrator-local lane that ran inline).
+--
+-- 'CI.Verdict' still receives an opaque @NodeId -> Text@ resolver,
+-- so its independence from the 'CI.Hosts' vocabulary is preserved
+-- without the cost of a second 'loadHosts' call.
+hostFor :: Hosts -> NodeId -> T.Text
+hostFor hosts n = case lookupHost (nodePlatform n) hosts of
+  Just h -> display h
+  Nothing -> "local"
 
 -- | The single 'die' site in the project: every recoverable failure
 -- mode threads up through @Either e a@ to this boundary, where the
