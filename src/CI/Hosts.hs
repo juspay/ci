@@ -18,12 +18,21 @@
 -- excludes platforms with no entry from the fanout, so the user
 -- opts in to a remote lane by adding its hosts.json key.
 module CI.Hosts
-  ( Host,
-    hostFromText,
+  ( -- * Types
+    Host,
     Hosts,
+
+    -- * Loading + lookup
     loadHosts,
     lookupHost,
     hostsPlatforms,
+
+    -- * === Internal (test surface) ===
+    hostFromText,
+    -- ^ Smart constructor for 'Host', exposed for tests in
+    -- "test.CI.TransportSpec" that need to build a host value
+    -- without going through the JSON loader. Production code mints
+    -- 'Host's exclusively via 'loadHosts'.
   )
 where
 

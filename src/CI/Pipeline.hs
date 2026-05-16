@@ -6,12 +6,17 @@
 -- "Main" is the dispatch layer; everything mode-specific or orchestration-
 -- shaped lives here.
 module CI.Pipeline
-  ( RunDir (..),
-    RunMode (..),
+  ( -- * Runtime artifact layout
+    RunDir (..),
     ensureRunDir,
+
+    -- * Run modes
     runLocal,
     runStrict,
     runGraph,
+
+    -- * Pipeline assembly
+    RunMode (..),
     buildProcessCompose,
   )
 where

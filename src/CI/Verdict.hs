@@ -17,15 +17,25 @@
 -- agreement by construction without this module having to depend on
 -- "CI.CommitStatus".
 module CI.Verdict
-  ( RecipeOutcome (..),
+  ( -- * Outcome values
+    RecipeOutcome (..),
     Outcomes,
+
+    -- * Per-event accumulator
     newOutcomes,
     recordOutcome,
     readOutcomes,
+
+    -- * End-of-run summary
     verdictCode,
     verdictSummary,
     exitWithVerdict,
+
+    -- * === Internal (test surface) ===
     terminalToOutcome,
+    -- ^ Exposed only for "test.CI.VerdictSpec"'s cross-module
+    -- agreement check against 'CI.CommitStatus.terminalToCommitStatus'
+    -- — production code reaches the mapping through 'recordOutcome'.
   )
 where
 
