@@ -70,14 +70,11 @@ import System.IO (hPutStrLn, stderr)
 -- swallowed — the node's exit code must not depend on whether a
 -- status post succeeded.
 postStatusFor :: Repo -> Sha -> FilePath -> NodeId -> ProcessState -> IO ()
-postStatusFor _ _ _ (SetupNode _) _ = pure ()
--- \^ Setup nodes are internal plumbing (bundle ship, drv copy); the
--- PR doesn't care whether @_ci-setup\@\<platform\>@ passed or failed,
--- only whether the *user's* recipes did. The verdict summary still
--- shows them.
-postStatusFor repo sha logDir node@(RecipeNode _ _) ps =
-  for_ (psToCommitStatus ps) $ \cs ->
-    postOne repo sha node cs $ describe cs $ logPathFor logDir node
+postStatusFor repo sha logDir node ps
+  | isUserVisible node =
+      for_ (psToCommitStatus ps) $ \cs ->
+        postOne repo sha node cs $ describe cs $ logPathFor logDir node
+  | otherwise = pure ()
 
 -- | Pre-seed every node with a 'Pending' commit status at startup —
 -- one parallel @gh api@ POST per node, all joined before this returns.
@@ -95,11 +92,17 @@ postStatusFor repo sha logDir node@(RecipeNode _ _) ps =
 -- before the pipeline kicks off.
 seedPending :: Repo -> Sha -> FilePath -> [NodeId] -> IO ()
 seedPending repo sha logDir nodes =
-  -- Same filter as 'postStatusFor': setup nodes are internal,
-  -- not user-visible recipes. Seeding them as @pending@ would
-  -- leave stray internal-named checks on the PR.
-  forConcurrently_ [n | n@(RecipeNode _ _) <- nodes] $ \n ->
+  forConcurrently_ (filter isUserVisible nodes) $ \n ->
     postOne repo sha n Pending $ seedDescription $ logPathFor logDir n
+
+-- | Whether a 'NodeId' belongs on the PR's user-facing checks page.
+-- Setup nodes are internal plumbing (bundle ship, drv copy) and
+-- never get GH posts; recipe nodes are the user's work and always
+-- do. The single source of truth for "is this user-facing?",
+-- consumed by both 'seedPending' and 'postStatusFor'.
+isUserVisible :: NodeId -> Bool
+isUserVisible (RecipeNode _ _) = True
+isUserVisible (SetupNode _) = False
 
 -- | Issue one commit-status POST with a caller-supplied description and
 -- log the outcome.
