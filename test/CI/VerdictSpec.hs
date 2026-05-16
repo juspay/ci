@@ -53,13 +53,13 @@ spec = do
   describe "verdictSummary" $ do
     it "lists every node in the summary lines" $ do
       let nodes = [(nodeLinux "alpha", Succeeded), (nodeLinux "beta", Failed), (nodeLinux "gamma", Skipped)]
-          joined = T.unlines $ verdictSummary $ Map.fromList nodes
+          joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
       for_ nodes $ \(n, _) ->
         (display n `T.isInfixOf` joined) `shouldBe` True
 
     it "shows the platform suffix in each summary line" $ do
       let nodes = [(NodeId "alpha" X86_64Linux, Succeeded), (NodeId "alpha" Aarch64Darwin, Failed)]
-          joined = T.unlines $ verdictSummary $ Map.fromList nodes
+          joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
       ("alpha@x86_64-linux" `T.isInfixOf` joined) `shouldBe` True
       ("alpha@aarch64-darwin" `T.isInfixOf` joined) `shouldBe` True
 
@@ -72,7 +72,7 @@ spec = do
             [ (NodeId setupRecipe X86_64Linux, Succeeded),
               (NodeId "build" X86_64Linux, Succeeded)
             ]
-          joined = T.unlines $ verdictSummary $ Map.fromList nodes
+          joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
       (display setupRecipe `T.isInfixOf` joined) `shouldBe` False
       ("build@x86_64-linux" `T.isInfixOf` joined) `shouldBe` True
 
@@ -82,7 +82,7 @@ spec = do
               (NodeId "build" X86_64Linux, Succeeded),
               (NodeId "test" X86_64Linux, Succeeded)
             ]
-          joined = T.unlines $ verdictSummary $ Map.fromList nodes
+          joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
       -- Two user recipes, not three (setup omitted).
       ("all 2 nodes succeeded" `T.isInfixOf` joined) `shouldBe` True
 

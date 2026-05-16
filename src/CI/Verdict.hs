@@ -116,10 +116,14 @@ terminalToOutcome TsSkipped = Skipped
 -- one common shape. The pure functions remain the seam for any
 -- caller that wants the summary without exiting (e.g. a future MCP
 -- server or HTTP handler).
-exitWithVerdict :: Outcomes -> IO ()
-exitWithVerdict outcomes = do
+--
+-- @mkHost@ resolves the host each node ran on — the orchestrator
+-- threads this in from the loaded 'CI.Hosts.Hosts' so the verdict
+-- module doesn't take a direct dependency on the hosts vocabulary.
+exitWithVerdict :: (NodeId -> Text) -> Outcomes -> IO ()
+exitWithVerdict mkHost outcomes = do
   o <- readOutcomes outcomes
-  mapM_ TIO.putStrLn (verdictSummary o)
+  mapM_ TIO.putStrLn (verdictSummary mkHost o)
   exitWith (verdictCode o)
 
 -- | Snapshot the accumulator. Call once, after the observer subscription
@@ -138,9 +142,14 @@ verdictCode outcomes
   | otherwise = ExitFailure 1
 
 -- | The pipeline's printable per-node summary: a header, one
--- column-aligned line per node (@\<recipe\>\@\<platform\>@), a
+-- column-aligned line per node (@\<recipe\>\@\<platform\>  \<host\>  \<outcome\>@), a
 -- divider, and a one-line verdict count. Pure; companion to
 -- 'verdictCode' over the same snapshot.
+--
+-- The host column shows where each node ran ("local" for the
+-- orchestrator-local lane, the SSH host name otherwise). Caller
+-- supplies the resolver so this module doesn't depend on the
+-- "CI.Hosts" vocabulary directly.
 --
 -- Synthetic setup nodes ('CI.NodeKind.isSetupNode') are filtered out
 -- of the per-node lines and the @n of m@ count: they're internal
@@ -157,18 +166,19 @@ verdictCode outcomes
 -- failed setup also marks every dependent recipe 'Skipped', which
 -- already flips the exit code; the summary's @n of m@ count
 -- reflects the user-recipe view independently of that.
-verdictSummary :: Map NodeId RecipeOutcome -> [Text]
-verdictSummary outcomes =
+verdictSummary :: (NodeId -> Text) -> Map NodeId RecipeOutcome -> [Text]
+verdictSummary mkHost outcomes =
   ["── ci run summary ─────────────────────────────"]
     <> map nodeLine entries
     <> ["───────────────────────────────────────────────", verdictLine]
   where
     userNodes = Map.filterWithKey (\n _ -> not (isSetupNode n)) outcomes
-    entries = [(display n, o) | (n, o) <- Map.toAscList userNodes]
-    failedCount = length (filter ((/= Succeeded) . snd) entries)
-    width = maximum (0 : map (T.length . fst) entries)
-    pad n = n <> T.replicate (width - T.length n) " "
-    nodeLine (n, o) = "  " <> pad n <> "  " <> display o
+    entries = [(display n, mkHost n, o) | (n, o) <- Map.toAscList userNodes]
+    failedCount = length (filter (\(_, _, o) -> o /= Succeeded) entries)
+    nodeWidth = maximum (0 : [T.length n | (n, _, _) <- entries])
+    hostWidth = maximum (0 : [T.length h | (_, h, _) <- entries])
+    pad w t = t <> T.replicate (w - T.length t) " "
+    nodeLine (n, h, o) = "  " <> pad nodeWidth n <> "  " <> pad hostWidth h <> "  " <> display o
     verdictLine
       | failedCount == 0 = "all " <> tshow (length entries) <> " nodes succeeded"
       | otherwise =

@@ -90,12 +90,13 @@ ensureRunDir = do
 runLocal :: RunDir -> Bool -> [String] -> IO ()
 runLocal dirs tui passthrough = do
   pc <- buildProcessCompose LocalRun
+  hostFor <- mkHostFor
   outcomes <- newOutcomes (processNames pc)
   let onState ps = withParsedNode ps $ \node -> recordOutcome outcomes node ps
   withObserver dirs.sock onState $
     void $
       runProcessCompose (UpInvocation dirs.sock dirs.pcLog dirs.pcYaml tui passthrough) pc
-  exitWithVerdict outcomes
+  exitWithVerdict hostFor outcomes
 
 -- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
 -- via @git worktree@ at @.ci\/worktree@ → start process-compose with its
@@ -131,6 +132,7 @@ runStrict dirs tui passthrough = do
   let logDir = logDirFor sha
   withSnapshotWorktree dirs.worktreePath $ do
     pc <- buildProcessCompose $ StrictRun dirs.worktreePath logDir
+    hostFor <- mkHostFor
     let nodes = processNames pc
     createPlatformDirs logDir nodes
     seedPending repo sha logDir nodes
@@ -141,7 +143,7 @@ runStrict dirs tui passthrough = do
     withObserver dirs.sock onState $
       void $
         runProcessCompose (UpInvocation dirs.sock dirs.pcLog dirs.pcYaml tui passthrough) pc
-    exitWithVerdict outcomes
+    exitWithVerdict hostFor outcomes
 
 -- | Materialise every @.ci\/\<sha\>\/\<platform\>\/@ subdirectory the
 -- pipeline will route logs to, before process-compose spawns. pc
@@ -403,6 +405,23 @@ commandForNode remoteLaneState localPlat hosts node = case lookupHost node.platf
         "internal error: hosts entry for "
           <> T.unpack (display node.platform)
           <> " but no SHA resolved (buildProcessCompose hasRemote logic broken)"
+
+-- | Build the @NodeId -> host-label@ resolver the verdict summary
+-- prints. Loads @~\/.config\/ci\/hosts.json@ once and closes over
+-- it: nodes whose platform has an entry render as that host; nodes
+-- without an entry render as @"local"@ (the orchestrator-local
+-- lane that ran inline).
+--
+-- Separate from 'buildProcessCompose's own 'loadHosts' call rather
+-- than threaded through: keeping the verdict module free of the
+-- hosts vocabulary means "CI.Verdict" stays a pure 'NodeId' →
+-- 'Text' consumer, and the cost is one extra JSON parse per run.
+mkHostFor :: IO (NodeId -> T.Text)
+mkHostFor = do
+  hosts <- loadHosts
+  pure $ \n -> case lookupHost n.platform hosts of
+    Just h -> display h
+    Nothing -> "local"
 
 -- | The single 'die' site in the project: every recoverable failure
 -- mode threads up through @Either e a@ to this boundary, where the
