@@ -47,11 +47,17 @@ justDrvFor Aarch64Linux = $$(envQ' "CI_JUST_DRV_AARCH64_LINUX")
 justDrvFor X86_64Darwin = $$(envQ' "CI_JUST_DRV_X86_64_DARWIN")
 justDrvFor Aarch64Darwin = $$(envQ' "CI_JUST_DRV_AARCH64_DARWIN")
 
+-- | The @.drv@ store path as 'Text', ready for embedding in shell
+-- snippets. Both 'shipJustDrv' and 'realisedJust' need this; the
+-- conversion is centralised here so neither has a @T.pack@ call.
+drvText :: Platform -> Text
+drvText = T.pack . justDrvFor
+
 -- | Shell snippet that copies the @just@ derivation for the given
 -- target platform to a remote, via the runner-command prefix (e.g.
 -- @ssh -T hostname@).
 --
--- @nix-store --export $(...closure...) | <runner> nix-store --import@
+-- @nix-store --export $(...closure...) | \<runner\> nix-store --import@
 -- ships the drv file plus its closure; the remote can then
 -- @--realise@ it. Output is redirected to @/dev/null@ since
 -- @nix-store --import@ prints every imported path on its own line
@@ -59,12 +65,10 @@ justDrvFor Aarch64Darwin = $$(envQ' "CI_JUST_DRV_AARCH64_DARWIN")
 shipJustDrv :: Text -> Platform -> Text
 shipJustDrv runner targetPlat =
   "nix-store --export $(nix-store --query --requisites "
-    <> drv
+    <> drvText targetPlat
     <> ") | "
     <> runner
     <> " nix-store --import > /dev/null"
-  where
-    drv = T.pack (justDrvFor targetPlat)
 
 -- | The bash sub-expression that yields the @just --no-deps
 -- \<recipe\>@ invocation on the remote, with @just@ provided by
@@ -82,8 +86,6 @@ shipJustDrv runner targetPlat =
 realisedJust :: Platform -> RecipeName -> Text
 realisedJust targetPlat recipe =
   "$(nix-store --realise "
-    <> drv
+    <> drvText targetPlat
     <> "!out)/bin/just --no-deps "
     <> display recipe
-  where
-    drv = T.pack (justDrvFor targetPlat)
