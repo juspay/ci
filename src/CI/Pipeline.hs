@@ -163,15 +163,11 @@ runStrict dirs tui passthrough = do
 -- through @mermaid-ascii@ (or paste into <https://mermaid.live>) to
 -- visualise.
 --
--- @mFmt@ is accepted for future format expansion (graphviz dot, plain
--- ASCII tree) but currently only @mermaid@ is emitted; non-mermaid
--- values are ignored.
---
 -- Read-only: 'ci graph' must not create @.ci\/@ as a side effect.
 -- That's why this takes no 'RunDir' — only 'runLocal' and
 -- 'runStrict' need the runtime-artifact paths.
-runGraph :: Maybe String -> IO ()
-runGraph _mFmt = do
+runGraph :: IO ()
+runGraph = do
   hosts <- loadHosts
   pc <- buildProcessCompose hosts DumpRun
   TIO.putStrLn (toMermaid (processGraph pc))

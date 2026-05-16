@@ -14,7 +14,7 @@ module Main where
 
 import CI.Hosts (loadHosts)
 import CI.Pipeline (RunMode (..), buildProcessCompose, ensureRunDir, runGraph, runLocal, runStrict)
-import Control.Applicative (many, optional, (<|>))
+import Control.Applicative (many, (<|>))
 import qualified Data.ByteString as BS
 import qualified Data.Yaml as Y
 import Options.Applicative
@@ -28,9 +28,7 @@ import Options.Applicative
     long,
     metavar,
     progDesc,
-    short,
     strArgument,
-    strOption,
     subparser,
     switch,
     (<**>),
@@ -44,12 +42,12 @@ import System.Environment (lookupEnv)
 data Args = Args {tui :: Bool, cmd :: Command}
 
 -- | The parsed subcommand. 'Run' carries any @-- ...@ passthrough args;
--- 'DumpYaml' has no options of its own; 'Graph' carries the
--- @process-compose graph --format@ choice (ascii/mermaid/json/yaml).
+-- 'DumpYaml' and 'Graph' have no options of their own (the graph is
+-- always emitted as Mermaid @flowchart TD@ syntax).
 data Command
   = Run [String]
   | DumpYaml
-  | Graph (Maybe String)
+  | Graph
 
 main :: IO ()
 main = do
@@ -65,7 +63,7 @@ main = do
       hosts <- loadHosts
       pc <- buildProcessCompose hosts DumpRun
       BS.putStr (Y.encode pc)
-    Graph fmt -> runGraph fmt
+    Graph -> runGraph
 
 parserInfo :: ParserInfo Args
 parserInfo =
@@ -87,21 +85,9 @@ commandParser =
   subparser
     ( O.command "run" (info runParser (progDesc "Execute the CI pipeline via process-compose (default). Args after -- are passed through."))
         <> O.command "dump-yaml" (info (pure DumpYaml) (progDesc "Print the process-compose YAML to stdout"))
-        <> O.command "graph" (info graphParser (progDesc "Print the process dependency graph (wraps `process-compose graph`)"))
+        <> O.command "graph" (info (pure Graph) (progDesc "Print the process dependency graph in Mermaid flowchart syntax"))
     )
     <|> runParser
 
 runParser :: Parser Command
 runParser = Run <$> many (strArgument (metavar "-- ARGS..."))
-
-graphParser :: Parser Command
-graphParser =
-  Graph
-    <$> optional
-      ( strOption
-          ( long "format"
-              <> short 'f'
-              <> metavar "FORMAT"
-              <> help "Output format passed to process-compose graph: ascii (default), mermaid, json, or yaml."
-          )
-      )
