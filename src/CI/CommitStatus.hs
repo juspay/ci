@@ -162,11 +162,13 @@ psToCommitStatus ps = case ps.status of
   PsRunning -> Just Pending
   _ -> terminalToCommitStatus <$> psToTerminalStatus ps
 
--- | GitHub-side mapping for the three terminal classifications. Owns
--- the policy that both 'PsSkipped' and 'PsErrored' surface as
--- 'Error' on the wire (see 'TerminalStatus' for why those two pc
--- states collapse together).
+-- | GitHub-side mapping for the two terminal classifications. The
+-- wire-layer 'PsSkipped' / 'PsErrored' have already been folded into
+-- 'TsFailed' by 'CI.ProcessCompose.Events.psToTerminalStatus', so the
+-- @Error@-vs-@Failure@ distinction we used to make for "upstream
+-- cascaded" doesn't exist here — every non-success surfaces as
+-- @Failure@. The cascade story is reconstructed elsewhere from the
+-- dep graph + outcome map.
 terminalToCommitStatus :: TerminalStatus -> CommitStatus
 terminalToCommitStatus TsSucceeded = Success
 terminalToCommitStatus TsFailed = Failure
-terminalToCommitStatus TsSkipped = Error

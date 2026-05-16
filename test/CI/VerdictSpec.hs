@@ -32,19 +32,15 @@ spec :: Spec
 spec = do
   describe "verdictCode" $ do
     it "is ExitSuccess when every node succeeded" $
-      verdictCode (Map.fromList [(nodeLinux "a", Succeeded), (nodeLinux "b", Succeeded)])
+      verdictCode (Map.fromList [(nodeLinux "a", Just Succeeded), (nodeLinux "b", Just Succeeded)])
         `shouldBe` ExitSuccess
 
-    it "is ExitFailure 1 when any node Failed" $
-      verdictCode (Map.fromList [(nodeLinux "a", Succeeded), (nodeLinux "b", Failed)])
+    it "is ExitFailure 1 when any node failed" $
+      verdictCode (Map.fromList [(nodeLinux "a", Just Succeeded), (nodeLinux "b", Just Failed)])
         `shouldBe` ExitFailure 1
 
-    it "is ExitFailure 1 when any node was Skipped (dep failed)" $
-      verdictCode (Map.fromList [(nodeLinux "a", Succeeded), (nodeLinux "b", Skipped)])
-        `shouldBe` ExitFailure 1
-
-    it "is ExitFailure 1 when any node is still Unreported (never reached terminal state)" $
-      verdictCode (Map.fromList [(nodeLinux "a", Succeeded), (nodeLinux "b", Unreported)])
+    it "is ExitFailure 1 when any node never reached terminal (Nothing)" $
+      verdictCode (Map.fromList [(nodeLinux "a", Just Succeeded), (nodeLinux "b", Nothing)])
         `shouldBe` ExitFailure 1
 
     it "is ExitSuccess for the empty map" $
@@ -52,13 +48,18 @@ spec = do
 
   describe "verdictSummary" $ do
     it "lists every node in the summary lines" $ do
-      let nodes = [(nodeLinux "alpha", Succeeded), (nodeLinux "beta", Failed), (nodeLinux "gamma", Skipped)]
+      let nodes = [(nodeLinux "alpha", Just Succeeded), (nodeLinux "beta", Just Failed), (nodeLinux "gamma", Nothing)]
           joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
       for_ nodes $ \(n, _) ->
         (display n `T.isInfixOf` joined) `shouldBe` True
 
+    it "renders Nothing as 'did not run'" $ do
+      let nodes = [(nodeLinux "alpha", Nothing)]
+          joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
+      ("did not run" `T.isInfixOf` joined) `shouldBe` True
+
     it "shows the platform suffix in each summary line" $ do
-      let nodes = [(RecipeNode "alpha" X86_64Linux, Succeeded), (RecipeNode "alpha" Aarch64Darwin, Failed)]
+      let nodes = [(RecipeNode "alpha" X86_64Linux, Just Succeeded), (RecipeNode "alpha" Aarch64Darwin, Just Failed)]
           joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
       ("alpha@x86_64-linux" `T.isInfixOf` joined) `shouldBe` True
       ("alpha@aarch64-darwin" `T.isInfixOf` joined) `shouldBe` True
@@ -69,8 +70,8 @@ spec = do
     -- 'postStatusFor', which already skip them from GH posts.
     it "omits setup nodes from the per-node lines" $ do
       let nodes =
-            [ (SetupNode X86_64Linux, Succeeded),
-              (RecipeNode "build" X86_64Linux, Succeeded)
+            [ (SetupNode X86_64Linux, Just Succeeded),
+              (RecipeNode "build" X86_64Linux, Just Succeeded)
             ]
           joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
       ("_ci-setup" `T.isInfixOf` joined) `shouldBe` False
@@ -78,9 +79,9 @@ spec = do
 
     it "omits setup nodes from the n-of-m count" $ do
       let nodes =
-            [ (SetupNode X86_64Linux, Succeeded),
-              (RecipeNode "build" X86_64Linux, Succeeded),
-              (RecipeNode "test" X86_64Linux, Succeeded)
+            [ (SetupNode X86_64Linux, Just Succeeded),
+              (RecipeNode "build" X86_64Linux, Just Succeeded),
+              (RecipeNode "test" X86_64Linux, Just Succeeded)
             ]
           joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
       -- Two user recipes, not three (setup omitted).

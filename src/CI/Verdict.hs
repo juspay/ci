@@ -9,13 +9,11 @@
 -- on the map for the pipeline's overall 'ExitCode' and 'verdictSummary'
 -- for the printable summary.
 --
--- 'RecipeOutcome' is local to this module: it's the verdict's
--- vocabulary, distinct from GitHub's 'CI.Gh.CommitStatus' (which has
--- a @Pending@ "check is open" transition that isn't a terminal
--- outcome). Both vocabularies derive from the same base classifier
--- — 'CI.ProcessCompose.Events.psToTerminalStatus' — so they stay in
--- agreement by construction without this module having to depend on
--- "CI.CommitStatus".
+-- 'RecipeOutcome' is the verdict's vocabulary: two terminal cases.
+-- Absence of a node from the event map (encoded as 'Nothing' in the
+-- pre-seeded map below) means "the observer never saw a terminal
+-- state for this node" — a non-success that flows into 'verdictCode'
+-- without needing its own 'RecipeOutcome' constructor.
 module CI.Verdict
   ( -- * Outcome values
     RecipeOutcome (..),
@@ -51,46 +49,45 @@ import Data.Text.Display (Display (..), display)
 import qualified Data.Text.IO as TIO
 import System.Exit (ExitCode (..), exitWith)
 
--- | The terminal outcome of one recipe in a pipeline run. 'Unreported'
--- means \"the observer never saw a terminal state event for this
--- recipe\" (the seed value) — distinguishing it from a process that
--- ran and succeeded keeps the verdict honest when pc crashes before
--- scheduling a recipe. The name is intentionally distinct from
--- 'CI.Gh.CommitStatus.Pending' (which is the in-flight \"check is
--- open\" transition GitHub posts during a run) — same word would mean
--- opposite things in adjacent modules.
-data RecipeOutcome = Unreported | Succeeded | Failed | Skipped
+-- | The terminal outcome of one node: ran-and-succeeded, or didn't.
+-- "Didn't reach a terminal event at all" (pc crashed before
+-- scheduling, network drop on the observer) is *not* a 'RecipeOutcome'
+-- constructor — it's the absence of a fold value in the per-node
+-- 'Maybe' slot of the 'Outcomes' map. "Skipped because the upstream
+-- failed" isn't a constructor either — that's a graph property of
+-- the dep map combined with the outcomes, not a per-node primitive.
+data RecipeOutcome = Succeeded | Failed
   deriving stock (Show, Eq)
 
 instance Display RecipeOutcome where
-  displayBuilder Unreported = "unreported"
   displayBuilder Succeeded = "succeeded"
   displayBuilder Failed = "failed"
-  displayBuilder Skipped = "skipped"
 
--- | The mutable per-run state the observer folds into. Keyed by the
--- typed 'NodeId' so the seed identity and the event-side identity
--- are the same value (no implicit @Text@ convention to drift). Opaque;
--- minted only by 'newOutcomes' and read only by 'readOutcomes'.
-newtype Outcomes = Outcomes (IORef (Map NodeId RecipeOutcome))
+-- | The mutable per-run state the observer folds into. Each scheduled
+-- 'NodeId' starts with 'Nothing' (no terminal event yet) and flips to
+-- @Just outcome@ when 'recordOutcome' fires. Keyed by the typed 'NodeId'
+-- so the seed identity and the event-side identity are the same value
+-- (no implicit @Text@ convention to drift). Opaque; minted only by
+-- 'newOutcomes' and read only by 'readOutcomes'.
+newtype Outcomes = Outcomes (IORef (Map NodeId (Maybe RecipeOutcome)))
 
--- | Pre-populate the outcome map with 'Unreported' for every node in
+-- | Pre-populate the outcome map with 'Nothing' for every node in
 -- the lowered pipeline. Without this, a node that pc never emits a
 -- state event for (e.g. pc crashed before scheduling it) would be
 -- absent from the final map entirely; with it, missing-from-pc
--- surfaces as a lingering 'Unreported', which 'verdictCode' treats as
--- a non-success and rolls into a non-zero exit.
+-- surfaces as a 'Nothing', which 'verdictCode' treats as a
+-- non-success and rolls into a non-zero exit.
 newOutcomes :: [NodeId] -> IO Outcomes
 newOutcomes nodes =
-  Outcomes <$> newIORef (Map.fromList [(n, Unreported) | n <- nodes])
+  Outcomes <$> newIORef (Map.fromList [(n, Nothing) | n <- nodes])
 
 -- | Fold one 'ProcessState' event for an already-parsed 'NodeId' into
 -- the outcome map. Routes through 'psToTerminalStatus' — the
 -- project-wide ground-truth classifier of process-compose's terminal
 -- states — and adopts its outcome under the verdict's own
 -- vocabulary. Non-terminal events ('PsRunning', 'PsOther') are
--- dropped; the seed 'Unreported' stays in place until a real
--- terminal event arrives.
+-- dropped; the seed 'Nothing' stays in place until a real terminal
+-- event arrives.
 --
 -- The 'NodeId' is parsed once at the composition site in
 -- 'CI.Pipeline'; this module no longer does its own 'parseNodeId'
@@ -111,13 +108,12 @@ recordOutcome (Outcomes ref) node ps =
     -- emitted a state for something we didn't ask it to schedule
     -- (which shouldn't happen, and adding ghost entries to the map
     -- would only confuse the summary).
-    atomicModifyIORef' ref (\m -> (Map.adjust (const o) node m, ()))
+    atomicModifyIORef' ref (\m -> (Map.adjust (const (Just o)) node m, ()))
 
--- | Verdict-side relabeling of the three terminal classifications.
+-- | Verdict-side relabeling of the two terminal classifications.
 terminalToOutcome :: TerminalStatus -> RecipeOutcome
 terminalToOutcome TsSucceeded = Succeeded
 terminalToOutcome TsFailed = Failed
-terminalToOutcome TsSkipped = Skipped
 
 -- | End-of-run convenience: snapshot the accumulator, print the
 -- per-recipe summary to stdout, and exit with the derived code.
@@ -138,16 +134,16 @@ exitWithVerdict mkHost outcomes = do
 -- | Snapshot the accumulator. Call once, after the observer subscription
 -- has closed (the WebSocket closes when process-compose exits, so by
 -- this point every terminal event has been folded in).
-readOutcomes :: Outcomes -> IO (Map NodeId RecipeOutcome)
+readOutcomes :: Outcomes -> IO (Map NodeId (Maybe RecipeOutcome))
 readOutcomes (Outcomes ref) = readIORef ref
 
 -- | The pipeline's exit code: 'ExitSuccess' iff every node in the
--- snapshot finished 'Succeeded'; anything else — 'Failed', 'Skipped',
--- or a lingering 'Unreported' — flips it to 'ExitFailure' 1. Pure;
--- trivial to test against handcrafted maps.
-verdictCode :: Map NodeId RecipeOutcome -> ExitCode
+-- snapshot finished @'Just' 'Succeeded'@; anything else — @Just Failed@
+-- or 'Nothing' (no terminal event) — flips it to 'ExitFailure' 1.
+-- Pure; trivial to test against handcrafted maps.
+verdictCode :: Map NodeId (Maybe RecipeOutcome) -> ExitCode
 verdictCode outcomes
-  | all (== Succeeded) (Map.elems outcomes) = ExitSuccess
+  | all (== Just Succeeded) (Map.elems outcomes) = ExitSuccess
   | otherwise = ExitFailure 1
 
 -- | The pipeline's printable per-node summary: a header, one
@@ -160,22 +156,21 @@ verdictCode outcomes
 -- supplies the resolver so this module doesn't depend on the
 -- "CI.Hosts" vocabulary directly.
 --
--- Synthetic setup nodes ('SetupNode') are filtered out of the
--- per-node lines and the @n of m@ count: they're internal
--- plumbing (per-platform bundle ship, drv copy), not user
--- recipes. This matches 'CI.CommitStatus.seedPending' /
--- 'CI.CommitStatus.postStatusFor', which already skip setup
--- nodes from GitHub commit-status posts — so a single policy
--- ("user-facing reporting omits setup nodes") covers both
--- audiences (PR reviewer on GitHub, local CLI user reading the
--- summary) instead of agreeing by coincidence.
+-- A 'Nothing' outcome — node was scheduled but never reached a
+-- terminal event — renders as @"did not run"@. This covers both
+-- "pc crashed before scheduling" and the upstream-cascade case
+-- (when pc emits @Skipped@ events for dep-failed nodes,
+-- 'psToTerminalStatus' folds them to 'TsFailed' if pc still routed
+-- them; nodes pc never scheduled at all stay 'Nothing').
 --
--- 'verdictCode' still considers every entry, including setup
--- nodes: a setup failure must flip the exit code. In practice a
--- failed setup also marks every dependent recipe 'Skipped', which
--- already flips the exit code; the summary's @n of m@ count
--- reflects the user-recipe view independently of that.
-verdictSummary :: (NodeId -> Text) -> Map NodeId RecipeOutcome -> [Text]
+-- Synthetic setup nodes ('SetupNode') are filtered out of the
+-- per-node lines and the @n of m@ count: they're internal plumbing
+-- (per-platform bundle ship, drv copy), not user recipes. This
+-- matches 'CI.CommitStatus.seedPending' / 'CI.CommitStatus.postStatusFor',
+-- which skip setup nodes from GitHub commit-status posts — so the PR
+-- reviewer on GitHub and the local CLI user see the same set of
+-- user-facing nodes.
+verdictSummary :: (NodeId -> Text) -> Map NodeId (Maybe RecipeOutcome) -> [Text]
 verdictSummary mkHost outcomes =
   ["── ci run summary ─────────────────────────────"]
     <> map nodeLine entries
@@ -185,11 +180,13 @@ verdictSummary mkHost outcomes =
     isRecipe (RecipeNode _ _) = True
     isRecipe (SetupNode _) = False
     entries = [(display n, mkHost n, o) | (n, o) <- Map.toAscList userNodes]
-    failedCount = length (filter (\(_, _, o) -> o /= Succeeded) entries)
+    failedCount = length (filter (\(_, _, o) -> o /= Just Succeeded) entries)
     nodeWidth = maximum (0 : [T.length n | (n, _, _) <- entries])
     hostWidth = maximum (0 : [T.length h | (_, h, _) <- entries])
     pad w t = t <> T.replicate (w - T.length t) " "
-    nodeLine (n, h, o) = "  " <> pad nodeWidth n <> "  " <> pad hostWidth h <> "  " <> display o
+    renderOutcome (Just o) = display o
+    renderOutcome Nothing = "did not run"
+    nodeLine (n, h, o) = "  " <> pad nodeWidth n <> "  " <> pad hostWidth h <> "  " <> renderOutcome o
     verdictLine
       | failedCount == 0 = "all " <> tshow (length entries) <> " nodes succeeded"
       | otherwise =
