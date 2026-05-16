@@ -27,9 +27,13 @@ module CI.Node
 
     -- * Wire round-trip
     parseNodeId,
+
+    -- * Graph rendering
+    toMermaid,
   )
 where
 
+import qualified Algebra.Graph.AdjacencyMap as G
 import CI.Justfile (RecipeName, recipeNameFromText)
 import CI.Platform (Platform, parsePlatform)
 import Data.Aeson (ToJSON (..), ToJSONKey (..))
@@ -113,3 +117,27 @@ parseNodeId t = case T.breakOnEnd "@" t of
       "" -> Nothing
       n | n == setupNodeName -> Just (SetupNode p)
       _ -> Just (RecipeNode (recipeNameFromText nameText) p)
+
+-- | Render an adjacency map of 'NodeId's as Mermaid @flowchart TD@.
+-- Vertex IDs are sanitized to mermaid-safe alphanumeric+underscore;
+-- the @\<name\>\@\<platform\>@ display form is preserved verbatim in
+-- the quoted label so the rendering reads the same as every other
+-- consumer of 'Display'.
+--
+-- Lives here (rather than in "CI.ProcessCompose") because the
+-- rendering volatility is "graph output format" — independent of the
+-- pc YAML schema — and the only knowledge needed is how to display
+-- a 'NodeId', which this module already owns.
+toMermaid :: G.AdjacencyMap NodeId -> Text
+toMermaid g =
+  T.intercalate "\n" $
+    "flowchart TD"
+      : [nodeLine n | n <- G.vertexList g]
+        <> [edgeLine a b | (a, b) <- G.edgeList g]
+  where
+    sanitize c
+      | c == '@' || c == ':' || c == '-' || c == '.' = '_'
+      | otherwise = c
+    nodeId n = T.map sanitize (display n)
+    nodeLine n = "  " <> nodeId n <> "[\"" <> display n <> "\"]"
+    edgeLine a b = "  " <> nodeId a <> " --> " <> nodeId b

@@ -30,7 +30,7 @@ import CI.Hosts (Hosts, hostsPlatforms, loadHosts, lookupHost)
 import CI.Justfile (Attribute (..), Recipe (..), RecipeName, fetchDump)
 import qualified CI.Justfile as J
 import CI.LogPath (logDirFor, logPathFor, platformDir)
-import CI.Node (NodeId (..), nodePlatform, parseNodeId)
+import CI.Node (NodeId (..), nodePlatform, parseNodeId, toMermaid)
 import CI.Platform (Platform, localPlatform, platformOs)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processGraph, processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
@@ -174,25 +174,6 @@ runGraph :: Maybe String -> IO ()
 runGraph _mFmt = do
   pc <- buildProcessCompose DumpRun
   TIO.putStrLn (toMermaid (processGraph pc))
-
--- | Render an adjacency map of 'NodeId's as Mermaid @flowchart TD@.
--- Vertex IDs are sanitized to mermaid-safe alphanumeric+underscore
--- (the @\<recipe\>\@\<platform\>@ display form is preserved verbatim in
--- the quoted label so the rendering reads the same as everywhere
--- else).
-toMermaid :: G.AdjacencyMap NodeId -> T.Text
-toMermaid g =
-  T.intercalate "\n" $
-    "flowchart TD"
-      : [nodeLine n | n <- G.vertexList g]
-        <> [edgeLine a b | (a, b) <- G.edgeList g]
-  where
-    sanitize c
-      | c == '@' || c == ':' || c == '-' || c == '.' = '_'
-      | otherwise = c
-    nodeId n = T.map sanitize (display n)
-    nodeLine n = "  " <> nodeId n <> "[\"" <> display n <> "\"]"
-    edgeLine a b = "  " <> nodeId a <> " --> " <> nodeId b
 
 -- | Materialise every @.ci\/\<sha\>\/\<platform\>\/@ subdirectory the
 -- pipeline will route logs to, before process-compose spawns. pc
