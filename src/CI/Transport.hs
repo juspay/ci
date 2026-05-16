@@ -45,6 +45,7 @@ where
 import CI.Git (Sha)
 import CI.Hosts (Host)
 import CI.Justfile (RecipeName, recipeCommand)
+import CI.LogPath (shortShaLen)
 import CI.Nix (realisedJust, shipJustDrv)
 import CI.Platform (Platform)
 import Data.Text (Text)
@@ -112,7 +113,7 @@ remoteRunner host = "ssh -T " <> display host
 -- disk pressure warrants.
 cachedRunDir :: Sha -> Platform -> Text
 cachedRunDir sha targetPlat =
-  "$HOME/.cache/ci/" <> T.take 7 (display sha) <> "/" <> display targetPlat
+  "$HOME/.cache/ci/" <> T.take shortShaLen (display sha) <> "/" <> display targetPlat
 
 -- | The remote-side shell snippet the setup node sends over ssh.
 -- Single-quoted on the way through so the local shell leaves @$DIR@

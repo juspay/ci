@@ -11,7 +11,7 @@
 -- to avoid collisions, a flat layout, S3 URLs) edits this file and
 -- nothing else; the YAML emitter and the commit-status poster both
 -- consume from here and stay byte-identical by construction.
-module CI.LogPath (logDirFor, platformDir, logPathFor) where
+module CI.LogPath (shortShaLen, logDirFor, platformDir, logPathFor) where
 
 import CI.Git (Sha)
 import CI.Node (NodeId, nodeName, nodePlatform)
@@ -20,8 +20,20 @@ import qualified Data.Text as T
 import Data.Text.Display (display)
 import System.FilePath ((</>))
 
+-- | The number of SHA hex chars used in log-directory and remote-cache-directory
+-- names. 7 chars gives ~1-in-268-million collision probability per repo, which
+-- is far beyond any real CI workload; and it fits comfortably inside GitHub's
+-- 140-char commit-status @description@ budget.
+--
+-- Both 'logDirFor' (local @.ci\/\<sha\>\/@ path) and 'CI.Transport.cachedRunDir'
+-- (remote @\$HOME\/.cache\/ci\/\<sha\>\/@ path) must use the same prefix length so
+-- a contributor can correlate the two directories. Import this constant rather
+-- than hardcoding @7@.
+shortShaLen :: Int
+shortShaLen = 7
+
 -- | Compose the per-run log directory: @.ci\/\<short-sha\>\/@. Returns
--- a repo-relative path with a 7-char abbreviated SHA so the
+-- a repo-relative path with a 'shortShaLen'-char abbreviated SHA so the
 -- @description@ field on a GitHub commit status stays readable inside
 -- its 140-char budget (a 40-char hex blob blew most of it on one
 -- field). Repo-relative so the path is portable across machines: a
@@ -38,7 +50,6 @@ logDirFor sha
   | otherwise = ".ci" </> T.unpack (T.take shortShaLen shaText)
   where
     shaText = display sha
-    shortShaLen = 7
 
 -- | Per-platform subdirectory under the run's log directory.
 -- @.ci\/\<short-sha\>\/\<platform\>\/@. Exposed so 'CI.Pipeline' can
