@@ -1,11 +1,12 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Argv parsing + dispatch to 'CI.Pipeline'. Two subcommands:
+-- | Argv parsing + dispatch to 'CI.Pipeline'. Three subcommands:
 --
 --   * @run [-- ARGS...]@ (default): drive the pipeline; @--@-args pass
 --     through to @process-compose up@. Mode is gated on @CI=true@.
 --   * @dump-yaml@: print the assembled YAML to stdout.
+--   * @graph@: print the dependency graph in Mermaid @flowchart TD@ syntax.
 --
 -- @--tui@ is a top-level flag: @ci --tui@ and @ci --tui run@ both
 -- work. The flag is only consulted in @run@ mode (it drives
