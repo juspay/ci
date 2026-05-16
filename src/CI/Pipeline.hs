@@ -98,7 +98,7 @@ ensureRunDir = do
 -- only.
 runLocal :: RunDir -> Bool -> [String] -> IO ()
 runLocal dirs tui passthrough = do
-  hosts <- loadHosts
+  hosts <- dieOnLeft =<< loadHosts
   pc <- buildProcessCompose hosts LocalRun
   outcomes <- newOutcomes (processNames pc)
   let onState ps = withParsedNode ps $ \node -> recordOutcome outcomes node ps
@@ -138,7 +138,7 @@ runStrict dirs tui passthrough = do
   dieOnLeft =<< ensureCleanTree
   repo <- dieOnLeft =<< viewRepo
   sha <- dieOnLeft =<< resolveSha
-  hosts <- loadHosts
+  hosts <- dieOnLeft =<< loadHosts
   let logDir = logDirFor sha
   withSnapshotWorktree dirs.worktreePath $ do
     pc <- buildProcessCompose hosts $ StrictRun dirs.worktreePath logDir
@@ -171,7 +171,7 @@ runStrict dirs tui passthrough = do
 -- 'runStrict' need the runtime-artifact paths.
 runGraph :: IO ()
 runGraph = do
-  hosts <- loadHosts
+  hosts <- dieOnLeft =<< loadHosts
   pc <- buildProcessCompose hosts DumpRun
   TIO.putStrLn (toMermaid (processGraph pc))
 
@@ -181,7 +181,7 @@ runGraph = do
 -- @hosts.json@ has no entry for the other platform.
 runDumpYaml :: IO ()
 runDumpYaml = do
-  hosts <- loadHosts
+  hosts <- dieOnLeft =<< loadHosts
   pc <- buildProcessCompose hosts DumpRun
   BS.putStr (Y.encode pc)
 

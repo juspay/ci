@@ -21,6 +21,7 @@ module CI.Hosts
   ( -- * Types
     Host,
     Hosts,
+    HostsLoadError,
 
     -- * Loading + lookup
     loadHosts,
@@ -44,7 +45,8 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
-import Data.Text.Display (Display)
+import qualified Data.Text as T
+import Data.Text.Display (Display (..))
 import System.Directory (getHomeDirectory)
 import System.FilePath ((</>))
 import System.IO.Error (isDoesNotExistError)
@@ -75,28 +77,49 @@ hostsPath = do
   home <- getHomeDirectory
   pure (home </> ".config" </> "ci" </> "hosts.json")
 
+-- | Why 'loadHosts' couldn't return a 'Hosts' value. Both failure
+-- modes carry the hosts.json path so the display rendering points
+-- the user at the file they need to fix.
+data HostsLoadError
+  = -- | The config file exists but couldn't be read (permissions,
+    -- disk error). The 'IOException' message is preserved for the
+    -- @Display@ rendering.
+    HostsReadError FilePath IOException
+  | -- | Aeson couldn't decode the bytes as the expected
+    -- @Map Text Text@ shape (a syntax error, wrong top-level type,
+    -- etc.). The aeson message names the position.
+    HostsDecodeError FilePath String
+  deriving stock (Show)
+
+instance Display HostsLoadError where
+  displayBuilder (HostsReadError path e) =
+    "cannot read " <> displayBuilder (T.pack path) <> ": " <> displayBuilder (T.pack (show e))
+  displayBuilder (HostsDecodeError path err) =
+    "malformed " <> displayBuilder (T.pack path) <> ": " <> displayBuilder (T.pack err)
+
 -- | Read the config file. Missing file → empty map (a fresh user has
 -- no hosts yet, and that's not an error — 'pipelinePlatformsFor'
 -- filters non-local platforms without entries out of the fanout).
--- Malformed JSON → 'fail'; we'd rather refuse than silently drop
--- the whole map.
+-- Other IO errors and malformed JSON surface as 'HostsLoadError'
+-- through @Either@; the orchestrator's 'dieOnLeft' renders the
+-- structured error rather than catching an opaque 'IOException'.
 --
 -- Unknown platform keys are dropped silently — a future addition to
 -- the 'Platform' enum shouldn't reject older configs, and an
 -- already-deleted constructor in an older config shouldn't reject
 -- newer binaries.
-loadHosts :: IO Hosts
+loadHosts :: IO (Either HostsLoadError Hosts)
 loadHosts = do
   path <- hostsPath
   result <- try @IOException $ BS.readFile path
   case result of
-    Left e | isDoesNotExistError e -> pure (Hosts Map.empty)
-    Left e -> fail $ "ci: cannot read " <> path <> ": " <> show e
+    Left e | isDoesNotExistError e -> pure (Right (Hosts Map.empty))
+    Left e -> pure (Left (HostsReadError path e))
     Right bs ->
       case eitherDecodeStrict @(Map Text Text) bs of
-        Left err -> fail $ "ci: malformed " <> path <> ": " <> err
+        Left err -> pure (Left (HostsDecodeError path err))
         Right raw ->
-          pure . Hosts . Map.fromList $
+          pure . Right . Hosts . Map.fromList $
             mapMaybe (\(k, v) -> (,Host v) <$> parsePlatform k) (Map.toList raw)
 
 -- | Pure lookup.
