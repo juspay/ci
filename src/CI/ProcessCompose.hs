@@ -176,8 +176,7 @@ toProcessCompose mkCommand mkWorkingDir mkLogLocation g =
 
 -- | The pc namespace label for a 'NodeId'. Derived structurally from
 -- the closed sum so the label and the constructor can never disagree.
--- Internal — exported only as a side effect of being used inside the
--- pure 'toProcessCompose' encoder; consumers shouldn't need this.
+-- Unexported — used only inside 'toProcessCompose'.
 namespaceFor :: NodeId -> Text
 namespaceFor (SetupNode _) = "setup"
 namespaceFor (RecipeNode _ _) = "recipes"
