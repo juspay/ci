@@ -301,7 +301,11 @@ buildProcessCompose mode = do
           <> unwords (show <$> rootOsFamilies rootRecipe)
     _ -> pure ()
   let nodeGraph = fanOut localPlat hosts pipelinePlatforms recipeGraph
-      hasRemote = any (\p -> isJust (lookupHost p hosts)) pipelinePlatforms
+      -- Same predicate 'fanOut' uses to decide where to emit setup
+      -- nodes — sourcing both from one definition avoids the dormant
+      -- divergence risk of two near-identical "is this platform
+      -- remote?" predicates.
+      hasRemote = any (\p -> isRemote p (localPlat, hosts)) pipelinePlatforms
   -- @DumpRun@ skips @resolveSha@ and the SSH branch falls back to
   -- 'shaPlaceholder' so @dump-yaml@ works outside a git checkout.
   remoteLaneState <- case mode of
