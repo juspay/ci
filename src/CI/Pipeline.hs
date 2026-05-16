@@ -182,7 +182,7 @@ toMermaid g =
   T.intercalate "\n" $
     "flowchart TD"
       : [nodeLine n | n <- G.vertexList g]
-      <> [edgeLine a b | (a, b) <- G.edgeList g]
+        <> [edgeLine a b | (a, b) <- G.edgeList g]
   where
     sanitize c
       | c == '@' || c == ':' || c == '-' || c == '.' = '_'
