@@ -14,12 +14,18 @@
 -- them: a recipe-level @[linux]@ gate matches both @x86_64-linux@ and
 -- @aarch64-linux@.
 module CI.Platform
-  ( Platform (..),
+  ( -- * Platform values
+    Platform (..),
     allPlatforms,
+
+    -- * Wire round-trip
     parsePlatform,
+
+    -- * Recipe-OS bridge
     platformOs,
     osToPlatforms,
-    LocalPlatformError,
+
+    -- * Local detection
     localPlatform,
   )
 where
