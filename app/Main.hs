@@ -63,9 +63,7 @@ main = do
     DumpYaml -> do
       pc <- buildProcessCompose DumpRun
       BS.putStr (Y.encode pc)
-    Graph fmt -> do
-      dirs <- ensureRunDir
-      runGraph dirs fmt
+    Graph fmt -> runGraph fmt
 
 parserInfo :: ParserInfo Args
 parserInfo =
