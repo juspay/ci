@@ -1,17 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Tests for "CI.Transport"'s runner-prefix selection and the
--- two remote-command shapes (setup + per-recipe). The end-to-end
--- bundle+clone+run path is exercised by the @ci::run-check@ smoke
--- test in @ci.just@; this spec locks down the structural choices
--- in isolation.
+-- | Tests for "CI.Transport"'s three command builders and runner
+-- prefix. The end-to-end bundle+clone+run path is exercised by the
+-- @ci::run-check@ smoke test in @ci.just@; this spec locks down the
+-- structural choices in isolation.
 module CI.TransportSpec (spec) where
 
 import CI.Git (shaPlaceholder)
 import CI.Hosts (hostFromText)
-import CI.Node (NodeId (..))
 import CI.Platform (Platform (..))
-import CI.Transport (Transport (..), commandFor, remoteRunner)
+import CI.Transport (localRecipeCommand, remoteRunner, sshRecipeCommand, sshSetupCommand)
 import qualified Data.Text as T
 import Test.Hspec
 
@@ -27,12 +25,14 @@ spec = do
     it "treats an ssh-config alias the same — anything ssh dials works" $
       remoteRunner (hostFromText "srid1") `shouldBe` "ssh -T srid1"
 
-  describe "commandFor Ssh + SetupNode" $ do
+  describe "localRecipeCommand" $ do
+    it "emits a bare just --no-deps invocation (pc working_dir handles the cwd)" $
+      ("--no-deps ci::build" `T.isInfixOf` localRecipeCommand "ci::build") `shouldBe` True
+
+  describe "sshSetupCommand" $ do
     let host = hostFromText "remote.example.com"
         sha = shaPlaceholder
-        -- Setup-vs-recipe is structural on 'NodeId' — Transport
-        -- pattern-matches the kind directly, no separate CommandShape.
-        cmd = commandFor (Ssh host sha Aarch64Darwin) (SetupNode Aarch64Darwin)
+        cmd = sshSetupCommand host sha Aarch64Darwin
 
     it "ships the just derivation first" $
       ("nix-store --export" `T.isInfixOf` cmd) `shouldBe` True
@@ -46,10 +46,10 @@ spec = do
     it "skips bundle+clone on cache hit" $
       ("cat > /dev/null; exit 0" `T.isInfixOf` cmd) `shouldBe` True
 
-  describe "commandFor Ssh + RecipeNode" $ do
+  describe "sshRecipeCommand" $ do
     let host = hostFromText "remote.example.com"
         sha = shaPlaceholder
-        cmd = commandFor (Ssh host sha Aarch64Darwin) (RecipeNode "ci::build" Aarch64Darwin)
+        cmd = sshRecipeCommand host sha Aarch64Darwin "ci::build"
 
     it "cd's into the per-(sha,platform) cached run dir set up by the setup node" $
       ("cd $HOME/.cache/ci/0000000/aarch64-darwin/src" `T.isInfixOf` cmd) `shouldBe` True

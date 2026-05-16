@@ -1,19 +1,19 @@
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | How a node actually executes: locally against the pipeline's
--- pinned worktree, or remotely against a shared checkout that's
--- set up once per host per run.
+-- | Per-node shell-command builders for the three valid combinations of
+-- (where it runs) × (what it runs):
 --
--- 'Transport' is the *where* axis ('Local' vs 'Ssh ...'). The
--- *what* axis — setup-vs-recipe — is structural on 'NodeId' itself
--- (a closed sum over 'SetupNode' / 'RecipeNode'), so 'commandFor'
--- pattern-matches on the node and the pair of pattern matches
--- ('Transport' × 'NodeId') is exhaustive at compile time. No
--- parallel @CommandShape@ sum, no @isSetupNode@ predicate, no
--- contract-error branch for the impossible (Local, setup) pair —
--- it's pattern-matched away.
+--   * 'localRecipeCommand' — recipe in the orchestrator's worktree.
+--   * 'sshRecipeCommand' — recipe in a remote's cached checkout.
+--   * 'sshSetupCommand' — the per-platform drv-copy + bundle + clone.
+--
+-- The fourth combination — "local + setup" — is structurally absent
+-- (there is no @localSetupCommand@), so the historical "(Local,
+-- SetupNode) is a runtime error" branch can't be written. Each
+-- function takes only the arguments its combination needs, and the
+-- caller ('CI.Pipeline.commandForNode') dispatches by pattern match on
+-- 'NodeId' + the host lookup it already performed.
 --
 -- Remote setup nodes ship the @just@ derivation, bundle @HEAD@
 -- across, and clone into
@@ -32,8 +32,12 @@
 -- string — bare hostnames, @user\@host@, aliases from
 -- @~\/.ssh\/config@ (incus instances are reached via an ssh alias).
 module CI.Transport
-  ( Transport (..),
-    commandFor,
+  ( -- * Command builders
+    localRecipeCommand,
+    sshSetupCommand,
+    sshRecipeCommand,
+
+    -- * SSH prefix
     remoteRunner,
   )
 where
@@ -42,42 +46,52 @@ import CI.Git (Sha)
 import CI.Hosts (Host)
 import CI.Justfile (RecipeName, recipeCommand)
 import CI.Nix (realisedJust, shipJustDrv)
-import CI.Node (NodeId (..))
 import CI.Platform (Platform)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (display)
 
--- | Where a node runs:
---
---   * 'Local' — process-compose's working_dir is already the pinned
---     worktree, so the @just@ subprocess just runs in cwd.
---   * 'Ssh' — over @ssh -T \<host\>@ against the shared cached
---     checkout under @\$HOME\/.cache\/ci\/\<short-sha\>\/\<platform\>@.
-data Transport
-  = Local
-  | Ssh Host Sha Platform
+-- | Recipe command in the orchestrator's worktree: bare @just
+-- --no-deps \<recipe\>@. process-compose's @working_dir@ already
+-- points at the pinned snapshot, so no @cd@ is needed.
+localRecipeCommand :: RecipeName -> Text
+localRecipeCommand = recipeCommand
 
--- | The shell command process-compose runs for one node. The
--- pattern-match is exhaustive across both axes — 'Transport' (Local /
--- Ssh) × 'NodeId' (SetupNode / RecipeNode) — so the four cases are
--- the complete contract:
+-- | Setup-node command. Ships the @just@ derivation, then bundles
+-- @HEAD@ across and clones into 'cachedRunDir'. Idempotent: if the
+-- target @src\/@ already exists (cache hit on same-SHA rerun), the
+-- incoming bundle bytes are discarded and the setup exits 0
+-- immediately.
 --
---   * @(Local, RecipeNode r _)@ — bare @just@ invocation in cwd.
---   * @(Local, SetupNode _)@ — not produced by 'CI.Pipeline.fanOut'
---     (setup nodes are emitted only for remote platforms). The
---     match is left to GHC's incomplete-patterns warning so a
---     misuse upstream becomes a compile-time signal, not a runtime
---     'error'.
---   * @(Ssh ..., SetupNode p)@ — drv-copy + bundle + clone.
---   * @(Ssh ..., RecipeNode r _)@ — cd into the cached checkout
---     and run the realised @just@.
-commandFor :: Transport -> NodeId -> Text
-commandFor Local (RecipeNode r _) = recipeCommand r
-commandFor (Ssh host sha targetPlat) (SetupNode _) = setupCommand host sha targetPlat
-commandFor (Ssh host sha targetPlat) (RecipeNode r _) = recipeRemoteCommand host sha targetPlat r
-commandFor Local (SetupNode _) =
-  error "internal error: SetupNode on Local transport (fanOut emits setup nodes only for remote platforms)"
+-- The bundle is always piped over the wire (we don't probe-then-ship
+-- because that'd add a round trip on every run). On a cache hit
+-- the wasted bandwidth is a few MB of bundle bytes discarded into
+-- @/dev/null@ on the remote — fine.
+sshSetupCommand :: Host -> Sha -> Platform -> Text
+sshSetupCommand host sha targetPlat =
+  shipJustDrv r targetPlat
+    <> " && git bundle create - --all 2>/dev/null | "
+    <> r
+    <> " '"
+    <> remoteSetupShell sha targetPlat
+    <> "'"
+  where
+    r = remoteRunner host
+
+-- | Per-recipe remote command. The corresponding setup node has
+-- already provisioned the cached checkout (process-compose's
+-- @depends_on@ enforces ordering); the recipe just @cd@s into it
+-- and runs the realised @just@.
+sshRecipeCommand :: Host -> Sha -> Platform -> RecipeName -> Text
+sshRecipeCommand host sha targetPlat r' =
+  runner
+    <> " 'cd "
+    <> cachedRunDir sha targetPlat
+    <> "/src && "
+    <> realisedJust targetPlat r'
+    <> "'"
+  where
+    runner = remoteRunner host
 
 -- | The shell-tokens prefix that runs a command on this 'Host':
 -- @ssh -T \<host\>@. @-T@ suppresses TTY allocation so binary stdin
@@ -100,27 +114,6 @@ cachedRunDir :: Sha -> Platform -> Text
 cachedRunDir sha targetPlat =
   "$HOME/.cache/ci/" <> T.take 7 (display sha) <> "/" <> display targetPlat
 
--- | Setup-node command. Ships the @just@ derivation, then bundles
--- @HEAD@ across and clones into 'cachedRunDir'. Idempotent: if the
--- target @src\/@ already exists (cache hit on same-SHA rerun), the
--- incoming bundle bytes are discarded and the setup exits 0
--- immediately.
---
--- The bundle is always piped over the wire (we don't probe-then-ship
--- because that'd add a round trip on every run). On a cache hit
--- the wasted bandwidth is a few MB of bundle bytes discarded into
--- @/dev/null@ on the remote — fine.
-setupCommand :: Host -> Sha -> Platform -> Text
-setupCommand host sha targetPlat =
-  shipJustDrv r targetPlat
-    <> " && git bundle create - --all 2>/dev/null | "
-    <> r
-    <> " '"
-    <> remoteSetupShell sha targetPlat
-    <> "'"
-  where
-    r = remoteRunner host
-
 -- | The remote-side shell snippet the setup node sends over ssh.
 -- Single-quoted on the way through so the local shell leaves @$DIR@
 -- and friends alone; the remote shell expands them. Cache-hit path
@@ -140,18 +133,3 @@ remoteSetupShell sha targetPlat =
            "cd src",
            "git -c advice.detachedHead=false checkout --quiet " <> display sha
          ]
-
--- | Per-recipe remote command. The corresponding setup node has
--- already provisioned the cached checkout (process-compose's
--- @depends_on@ enforces ordering); the recipe just @cd@s into it
--- and runs the realised @just@.
-recipeRemoteCommand :: Host -> Sha -> Platform -> RecipeName -> Text
-recipeRemoteCommand host sha targetPlat r' =
-  runner
-    <> " 'cd "
-    <> cachedRunDir sha targetPlat
-    <> "/src && "
-    <> realisedJust targetPlat r'
-    <> "'"
-  where
-    runner = remoteRunner host

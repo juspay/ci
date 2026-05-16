@@ -35,7 +35,7 @@ import CI.Platform (Platform, localPlatform, platformOs)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processGraph, processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
 import CI.Root (findRoot)
-import CI.Transport (Transport (..), commandFor)
+import CI.Transport (localRecipeCommand, sshRecipeCommand, sshSetupCommand)
 import CI.Verdict (exitWithVerdict, newOutcomes, recordOutcome)
 import Control.Concurrent.Async (link, wait, withAsync)
 import Control.Monad (void)
@@ -397,23 +397,30 @@ isRemote :: Platform -> (Platform, Hosts) -> Bool
 isRemote p (localPlat, hosts) =
   isJust (lookupHost p hosts) || p /= localPlat
 
--- | Per-node command construction. Picks the transport from what the
--- orchestrator already knows (hosts.json entry → SSH; bare local
--- platform → 'Local') and hands the typed 'NodeId' to
--- 'CI.Transport.commandFor', which pattern-matches the kind
--- structurally — no parallel @CommandShape@ sum, no
--- @isSetupNode@-derived branch.
+-- | Per-node command construction. Dispatches over (host lookup,
+-- node kind) and picks one of the three valid command builders in
+-- 'CI.Transport'. The "(Local, SetupNode)" combination is
+-- structurally absent — there is no @localSetupCommand@ — so the
+-- match is total over the cases the fanout actually produces:
 --
--- @sha@ is consumed only by the SSH branch (setup nodes embed it in
--- the remote @git checkout@, recipe nodes target the cached checkout
--- at that SHA). Local-mode runs without remote lanes still pass
--- 'shaPlaceholder' for typesetting purposes — it's never read.
+--   * @(RecipeNode, no host, local platform)@ → 'localRecipeCommand'
+--   * @(RecipeNode, host)@                    → 'sshRecipeCommand'
+--   * @(SetupNode, host)@                     → 'sshSetupCommand'
+--
+-- @sha@ is consumed only by the SSH builders. Local-mode runs
+-- without remote lanes pass 'shaPlaceholder' as a no-op (never
+-- read — the graph has no SSH nodes).
 commandForNode :: Sha -> Platform -> Hosts -> NodeId -> T.Text
-commandForNode sha localPlat hosts node = case lookupHost plat hosts of
-  Just h -> commandFor (Ssh h sha plat) node
-  Nothing
-    | plat == localPlat -> commandFor Local node
+commandForNode sha localPlat hosts node = case (node, lookupHost plat hosts) of
+  (RecipeNode r _, Nothing)
+    | plat == localPlat -> localRecipeCommand r
     | otherwise -> hostContractError
+  (RecipeNode r _, Just h) -> sshRecipeCommand h sha plat r
+  (SetupNode _, Just h) -> sshSetupCommand h sha plat
+  -- 'fanOut' emits setup nodes only for platforms with a hosts entry,
+  -- so this branch is unreachable given the invariants. Surface a
+  -- contract error rather than make it a 'commandFor' input shape.
+  (SetupNode _, Nothing) -> setupOnLocalError
   where
     plat = nodePlatform node
     hostContractError =
@@ -421,6 +428,11 @@ commandForNode sha localPlat hosts node = case lookupHost plat hosts of
         "internal error: no SSH host for "
           <> T.unpack (display plat)
           <> " (pipelinePlatformsFor should have excluded this)"
+    setupOnLocalError =
+      error $
+        "internal error: SetupNode for "
+          <> T.unpack (display plat)
+          <> " with no hosts entry (fanOut emits setup only for remote platforms)"
 
 -- | The @NodeId -> host-label@ resolver the verdict summary prints.
 -- Pure: closes over an already-loaded 'Hosts' so the caller controls
