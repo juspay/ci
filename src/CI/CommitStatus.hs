@@ -2,12 +2,31 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Translate process-compose state events into GitHub commit-status posts.
--- This module owns CI's policy: the context-name convention
--- (@\<recipe\>\@\<platform\>@, derived from 'NodeId'), the
--- 'ProcessStatus' → 'CommitStatus' mapping, and the human-readable
--- description per state. The endpoint URL, the wire encoding of each
--- state, and the form-field names are gh-API details owned by
--- "CI.Gh".
+-- This module owns CI's policy across the commit-status lifecycle:
+--
+--   * The context-name convention (@\<recipe\>\@\<platform\>@,
+--     derived from 'NodeId').
+--   * The @startup → terminal@ state transitions —
+--     'seedPending' fans out @Pending@ posts at the top of a run so
+--     every expected check appears at once, and 'postStatusFor'
+--     translates each in-flight 'ProcessState' event into the
+--     matching @Pending@ / @Success@ / @Failure@ / @Error@ update.
+--   * The setup-node filter — internal plumbing nodes
+--     ('CI.NodeKind.isSetupNode') are excluded from both the seed
+--     and the per-event posts, matching the same filter
+--     'CI.Verdict.verdictSummary' applies so the PR checks page and
+--     the local CLI summary agree on what counts as user-facing.
+--   * The human-readable description per state (suffixed with the
+--     log path so the GitHub UI carries a navigable pointer).
+--   * 'terminalToCommitStatus' — the wire-side half of the
+--     cross-module agreement with 'CI.Verdict.terminalToOutcome':
+--     both consumers of 'TerminalStatus' derive from this one
+--     mapping so the GH check page and the local exit code never
+--     disagree about which terminal classification counts as
+--     success.
+--
+-- The endpoint URL, the wire encoding of each state, and the
+-- form-field names are gh-API details owned by "CI.Gh".
 module CI.CommitStatus (postStatusFor, seedPending, terminalToCommitStatus) where
 
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
