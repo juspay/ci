@@ -95,14 +95,14 @@ ensureRunDir = do
 -- only.
 runLocal :: RunDir -> Bool -> [String] -> IO ()
 runLocal dirs tui passthrough = do
-  pc <- buildProcessCompose LocalRun
-  hostFor <- mkHostFor
+  hosts <- loadHosts
+  pc <- buildProcessCompose hosts LocalRun
   outcomes <- newOutcomes (processNames pc)
   let onState ps = withParsedNode ps $ \node -> recordOutcome outcomes node ps
   withObserver dirs.sock onState $
     void $
       runProcessCompose (UpInvocation dirs.sock dirs.pcLog dirs.pcYaml tui passthrough) pc
-  exitWithVerdict hostFor outcomes
+  exitWithVerdict (hostFor hosts) outcomes
 
 -- | Strict mode: clean-tree refuse → resolve repo + SHA → snapshot HEAD
 -- via @git worktree@ at @.ci\/worktree@ → start process-compose with its
@@ -135,10 +135,10 @@ runStrict dirs tui passthrough = do
   dieOnLeft =<< ensureCleanTree
   repo <- dieOnLeft =<< viewRepo
   sha <- dieOnLeft =<< resolveSha
+  hosts <- loadHosts
   let logDir = logDirFor sha
   withSnapshotWorktree dirs.worktreePath $ do
-    pc <- buildProcessCompose $ StrictRun dirs.worktreePath logDir
-    hostFor <- mkHostFor
+    pc <- buildProcessCompose hosts $ StrictRun dirs.worktreePath logDir
     let nodes = processNames pc
     createPlatformDirs logDir nodes
     seedPending repo sha logDir nodes
@@ -149,7 +149,7 @@ runStrict dirs tui passthrough = do
     withObserver dirs.sock onState $
       void $
         runProcessCompose (UpInvocation dirs.sock dirs.pcLog dirs.pcYaml tui passthrough) pc
-    exitWithVerdict hostFor outcomes
+    exitWithVerdict (hostFor hosts) outcomes
 
 -- | Print the assembled pipeline's dependency graph to stdout in
 -- Mermaid @flowchart@ syntax. Uses the same 'DumpRun' shape
@@ -172,7 +172,8 @@ runStrict dirs tui passthrough = do
 -- 'runStrict' need the runtime-artifact paths.
 runGraph :: Maybe String -> IO ()
 runGraph _mFmt = do
-  pc <- buildProcessCompose DumpRun
+  hosts <- loadHosts
+  pc <- buildProcessCompose hosts DumpRun
   TIO.putStrLn (toMermaid (processGraph pc))
 
 -- | Materialise every @.ci\/\<sha\>\/\<platform\>\/@ subdirectory the
@@ -278,8 +279,8 @@ yamlPathsFor DumpRun = (const Nothing, const Nothing)
 --    depending on whether its platform matches the runner's; the
 --    'CI.Transport.commandFor' rendering is the only site that knows
 --    SSH command shapes.
-buildProcessCompose :: RunMode -> IO ProcessCompose
-buildProcessCompose mode = do
+buildProcessCompose :: Hosts -> RunMode -> IO ProcessCompose
+buildProcessCompose hosts mode = do
   recipes <- dieOnLeft =<< fetchDump
   rootName <- dieOnLeft $ findRoot recipes
   rootRecipe <- case Map.lookup rootName recipes of
@@ -289,7 +290,6 @@ buildProcessCompose mode = do
   reachable <- dieOnLeft $ reachableSubgraph rootName recipes
   recipeGraph <- dieOnLeft $ lowerToRunnerGraph reachable
   localPlat <- dieOnLeft localPlatform
-  hosts <- loadHosts
   let pipelinePlatforms = pipelinePlatformsFor rootRecipe localPlat hosts
   case pipelinePlatforms of
     [] ->
@@ -422,22 +422,20 @@ commandForNode sha localPlat hosts node = case lookupHost plat hosts of
           <> T.unpack (display plat)
           <> " (pipelinePlatformsFor should have excluded this)"
 
--- | Build the @NodeId -> host-label@ resolver the verdict summary
--- prints. Loads @~\/.config\/ci\/hosts.json@ once and closes over
--- it: nodes whose platform has an entry render as that host; nodes
--- without an entry render as @"local"@ (the orchestrator-local
--- lane that ran inline).
+-- | The @NodeId -> host-label@ resolver the verdict summary prints.
+-- Pure: closes over an already-loaded 'Hosts' so the caller controls
+-- how many times the JSON is parsed (once, at the top of
+-- 'runLocal' / 'runStrict' / 'runGraph'). Nodes whose platform has
+-- an entry render as that host; nodes without an entry render as
+-- @"local"@ (the orchestrator-local lane that ran inline).
 --
--- Separate from 'buildProcessCompose's own 'loadHosts' call rather
--- than threaded through: keeping the verdict module free of the
--- hosts vocabulary means "CI.Verdict" stays a pure 'NodeId' →
--- 'Text' consumer, and the cost is one extra JSON parse per run.
-mkHostFor :: IO (NodeId -> T.Text)
-mkHostFor = do
-  hosts <- loadHosts
-  pure $ \n -> case lookupHost (nodePlatform n) hosts of
-    Just h -> display h
-    Nothing -> "local"
+-- 'CI.Verdict' still receives an opaque @NodeId -> Text@ resolver,
+-- so its independence from the 'CI.Hosts' vocabulary is preserved
+-- without the cost of a second 'loadHosts' call.
+hostFor :: Hosts -> NodeId -> T.Text
+hostFor hosts n = case lookupHost (nodePlatform n) hosts of
+  Just h -> display h
+  Nothing -> "local"
 
 -- | The single 'die' site in the project: every recoverable failure
 -- mode threads up through @Either e a@ to this boundary, where the

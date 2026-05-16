@@ -12,6 +12,7 @@
 -- process-compose's TUI); other subcommands ignore it silently.
 module Main where
 
+import CI.Hosts (loadHosts)
 import CI.Pipeline (RunMode (..), buildProcessCompose, ensureRunDir, runGraph, runLocal, runStrict)
 import Control.Applicative (many, optional, (<|>))
 import qualified Data.ByteString as BS
@@ -61,7 +62,8 @@ main = do
         then runStrict dirs tui passthrough
         else runLocal dirs tui passthrough
     DumpYaml -> do
-      pc <- buildProcessCompose DumpRun
+      hosts <- loadHosts
+      pc <- buildProcessCompose hosts DumpRun
       BS.putStr (Y.encode pc)
     Graph fmt -> runGraph fmt
 
