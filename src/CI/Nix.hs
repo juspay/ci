@@ -27,7 +27,7 @@
 -- invocation (export, import, realise, output-selector syntax) is
 -- in one module instead of woven into the bundle+ssh choreography
 -- of 'CI.Transport'.
-module CI.Nix (justDrvFor, shipJustDrv, realisedJust) where
+module CI.Nix (shipJustDrv, realisedJust) where
 
 import CI.Justfile (RecipeName)
 import CI.Platform (Platform (..))
