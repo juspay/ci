@@ -11,7 +11,6 @@ import CI.CommitStatus (terminalToCommitStatus)
 import CI.Gh (CommitStatus (Success))
 import CI.Justfile (RecipeName)
 import CI.Node (NodeId (..))
-import CI.NodeKind (setupRecipe)
 import CI.Platform (Platform (..))
 import CI.ProcessCompose.Events (TerminalStatus)
 import CI.Verdict (RecipeOutcome (..), terminalToOutcome, verdictCode, verdictSummary)
@@ -22,11 +21,12 @@ import Data.Text.Display (display)
 import System.Exit (ExitCode (..))
 import Test.Hspec
 
--- | Convenience: build a X86_64Linux-lane 'NodeId' from a bare recipe-name
--- string literal. 'CI.Justfile.RecipeName' has 'IsString', so the
--- argument under @-XOverloadedStrings@ disambiguates correctly.
+-- | Convenience: build a X86_64Linux-lane 'RecipeNode' from a bare
+-- recipe-name string literal. 'CI.Justfile.RecipeName' has
+-- 'IsString', so the argument under @-XOverloadedStrings@
+-- disambiguates correctly.
 nodeLinux :: RecipeName -> NodeId
-nodeLinux r = NodeId r X86_64Linux
+nodeLinux r = RecipeNode r X86_64Linux
 
 spec :: Spec
 spec = do
@@ -58,7 +58,7 @@ spec = do
         (display n `T.isInfixOf` joined) `shouldBe` True
 
     it "shows the platform suffix in each summary line" $ do
-      let nodes = [(NodeId "alpha" X86_64Linux, Succeeded), (NodeId "alpha" Aarch64Darwin, Failed)]
+      let nodes = [(RecipeNode "alpha" X86_64Linux, Succeeded), (RecipeNode "alpha" Aarch64Darwin, Failed)]
           joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
       ("alpha@x86_64-linux" `T.isInfixOf` joined) `shouldBe` True
       ("alpha@aarch64-darwin" `T.isInfixOf` joined) `shouldBe` True
@@ -69,18 +69,18 @@ spec = do
     -- 'postStatusFor', which already skip them from GH posts.
     it "omits setup nodes from the per-node lines" $ do
       let nodes =
-            [ (NodeId setupRecipe X86_64Linux, Succeeded),
-              (NodeId "build" X86_64Linux, Succeeded)
+            [ (SetupNode X86_64Linux, Succeeded),
+              (RecipeNode "build" X86_64Linux, Succeeded)
             ]
           joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
-      (display setupRecipe `T.isInfixOf` joined) `shouldBe` False
+      ("_ci-setup" `T.isInfixOf` joined) `shouldBe` False
       ("build@x86_64-linux" `T.isInfixOf` joined) `shouldBe` True
 
     it "omits setup nodes from the n-of-m count" $ do
       let nodes =
-            [ (NodeId setupRecipe X86_64Linux, Succeeded),
-              (NodeId "build" X86_64Linux, Succeeded),
-              (NodeId "test" X86_64Linux, Succeeded)
+            [ (SetupNode X86_64Linux, Succeeded),
+              (RecipeNode "build" X86_64Linux, Succeeded),
+              (RecipeNode "test" X86_64Linux, Succeeded)
             ]
           joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
       -- Two user recipes, not three (setup omitted).

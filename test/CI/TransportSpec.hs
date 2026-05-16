@@ -9,8 +9,9 @@ module CI.TransportSpec (spec) where
 
 import CI.Git (shaPlaceholder)
 import CI.Hosts (hostFromText)
+import CI.Node (NodeId (..))
 import CI.Platform (Platform (..))
-import CI.Transport (CommandShape (..), Transport (..), commandFor, remoteRunner)
+import CI.Transport (Transport (..), commandFor, remoteRunner)
 import qualified Data.Text as T
 import Test.Hspec
 
@@ -26,13 +27,12 @@ spec = do
     it "treats an ssh-config alias the same — anything ssh dials works" $
       remoteRunner (hostFromText "srid1") `shouldBe` "ssh -T srid1"
 
-  describe "commandFor Ssh + SetupCommand" $ do
+  describe "commandFor Ssh + SetupNode" $ do
     let host = hostFromText "remote.example.com"
         sha = shaPlaceholder
-        -- Setup-vs-recipe is discriminated by 'CommandShape',
-        -- chosen by the caller in 'CI.Pipeline'; Transport
-        -- doesn't read node identity to re-derive the choice.
-        cmd = commandFor (Ssh host sha Aarch64Darwin) SetupCommand
+        -- Setup-vs-recipe is structural on 'NodeId' — Transport
+        -- pattern-matches the kind directly, no separate CommandShape.
+        cmd = commandFor (Ssh host sha Aarch64Darwin) (SetupNode Aarch64Darwin)
 
     it "ships the just derivation first" $
       ("nix-store --export" `T.isInfixOf` cmd) `shouldBe` True
@@ -46,10 +46,10 @@ spec = do
     it "skips bundle+clone on cache hit" $
       ("cat > /dev/null; exit 0" `T.isInfixOf` cmd) `shouldBe` True
 
-  describe "commandFor Ssh + RecipeCommand" $ do
+  describe "commandFor Ssh + RecipeNode" $ do
     let host = hostFromText "remote.example.com"
         sha = shaPlaceholder
-        cmd = commandFor (Ssh host sha Aarch64Darwin) (RecipeCommand "ci::build")
+        cmd = commandFor (Ssh host sha Aarch64Darwin) (RecipeNode "ci::build" Aarch64Darwin)
 
     it "cd's into the per-(sha,platform) cached run dir set up by the setup node" $
       ("cd $HOME/.cache/ci/0000000/aarch64-darwin/src" `T.isInfixOf` cmd) `shouldBe` True

@@ -1,19 +1,31 @@
 {-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | The runner DAG's node identity: a recipe paired with the platform
--- it's targeted at. Process-compose's wire vocabulary keys processes
--- by a single 'Data.Text.Text', so 'NodeId' has a canonical textual
--- form (via 'Display') and a parser ('parseNodeId') for round-tripping
--- a @ProcessState.name@ back into a typed value.
+-- | The runner DAG's node identity, as a closed sum over the two kinds
+-- of nodes the orchestrator ever schedules:
+--
+--   * 'SetupNode' — per-platform internal plumbing (the once-per-remote
+--     bundle ship + drv copy).
+--   * 'RecipeNode' — a user recipe paired with the target platform.
+--
+-- The kind is *structural*, not name-derived: no consumer infers it
+-- from a magic recipe-name prefix, and pattern matches on the sum get
+-- '-Wincomplete-patterns' coverage. The one place where the
+-- @_ci-setup@ wire-name lives is this module — inside 'Display' and
+-- 'parseNodeId'.
 --
 -- The @\<recipe\>\@\<platform\>@ separator is chosen because recipe
 -- FQNs use @::@ (so collisions are impossible) and @\@@ needs no
 -- shell quoting in any consumer. Kolu uses the same convention for
 -- its GitHub commit-status contexts.
 module CI.Node
-  ( NodeId (..),
+  ( -- * Identity
+    NodeId (..),
+    nodePlatform,
+    nodeName,
+
+    -- * Wire round-trip
     parseNodeId,
   )
 where
@@ -26,23 +38,49 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (Display (..), display)
 
--- | The runner DAG node: which recipe, on which target platform.
--- Lifted out of a bare 'RecipeName' once the runner became
--- multi-platform — every downstream map key, log path, and
--- commit-status context that used to consume a 'RecipeName' now
--- consumes a 'NodeId'.
-data NodeId = NodeId
-  { recipe :: RecipeName,
-    platform :: Platform
-  }
+-- | A scheduled DAG node. Setup and recipe nodes share the per-platform
+-- attribute (both fan out across the pipeline's platform set) but only
+-- recipe nodes carry a 'RecipeName' — setup nodes are uniquely
+-- identified by their platform. Pulling them apart removes the
+-- "is this a setup recipe by name?" runtime check and pushes the
+-- distinction into pattern-match exhaustiveness.
+data NodeId
+  = SetupNode Platform
+  | RecipeNode RecipeName Platform
   deriving stock (Show, Eq, Ord)
 
--- | The canonical wire form: @\<recipe\>\@\<platform\>@. This is the
--- string process-compose sees as a process name and the context name
--- on the GitHub commit status. Every consumer renders through this
--- one instance.
+-- | The platform a node targets. Both constructors carry one; this
+-- helper saves callers a four-line pattern match when they only
+-- need that field.
+nodePlatform :: NodeId -> Platform
+nodePlatform = \case
+  SetupNode p -> p
+  RecipeNode _ p -> p
+
+-- | The recipe-name portion of the wire identity (no @\@\<platform\>@
+-- suffix). Setup nodes return the reserved 'setupNodeName' constant;
+-- recipe nodes return their 'RecipeName' rendered as text. Used by
+-- on-disk log-path construction in 'CI.LogPath' where the platform
+-- already lives in the directory component.
+nodeName :: NodeId -> Text
+nodeName = \case
+  SetupNode _ -> setupNodeName
+  RecipeNode r _ -> display r
+
+-- | The wire name reserved for setup nodes. Only used inside this
+-- module — by 'Display' (to render the @\<name\>\@\<platform\>@ form)
+-- and by 'parseNodeId' (to recognise setup-node wire inputs). Every
+-- other module consumes the kind via pattern matching on 'NodeId',
+-- not by string comparison.
+setupNodeName :: Text
+setupNodeName = "_ci-setup"
+
+-- | The canonical wire form: @\<name\>\@\<platform\>@, where @name@ is
+-- 'setupNodeName' for setup nodes and the recipe's display name for
+-- recipe nodes. This is the string process-compose sees as a
+-- process name and the context name on GitHub commit statuses.
 instance Display NodeId where
-  displayBuilder n = displayBuilder n.recipe <> "@" <> displayBuilder n.platform
+  displayBuilder n = displayBuilder (nodeName n) <> "@" <> displayBuilder (nodePlatform n)
 
 -- | YAML/JSON key encoding for the process-compose @processes@ map.
 -- Routes through 'Display' so the wire form ('@'-separated) is the
@@ -54,22 +92,24 @@ instance ToJSONKey NodeId where
   toJSONKey = toJSONKeyText display
 
 -- | Inverse of 'display'. The wire-side observer
--- ('CI.ProcessCompose.Events.subscribeStates') hands us a raw
--- 'Text' and we recover the typed value here. Splits on the *last*
--- @\@@ so a recipe FQN containing no @\@@ (the usual case) and the
--- platform suffix are unambiguous; 'Nothing' on any unparseable
--- input.
+-- ('CI.ProcessCompose.Events.subscribeStates') hands us a raw 'Text'
+-- and we recover the typed value here. Splits on the *last* @\@@ so
+-- a recipe FQN containing no @\@@ (the usual case) and the platform
+-- suffix are unambiguous; 'Nothing' on any unparseable input. The
+-- 'setupNodeName' constant is the single load-bearing string seam
+-- between the wire and the closed sum.
 --
 -- Failure mode is silent-drop at the call site (see
--- 'CI.Verdict.recordOutcome'): an unknown wire name means the run
+-- 'CI.Pipeline.withParsedNode'): an unknown wire name means the run
 -- emitted a process we didn't schedule, which is a contract
 -- violation we surface elsewhere rather than crash on here.
 parseNodeId :: Text -> Maybe NodeId
 parseNodeId t = case T.breakOnEnd "@" t of
   ("", _) -> Nothing
   (prefixWithSep, platformText) -> do
-    let recipeText = T.dropEnd 1 prefixWithSep
+    let nameText = T.dropEnd 1 prefixWithSep
     p <- parsePlatform platformText
-    if T.null recipeText
-      then Nothing
-      else Just (NodeId (recipeNameFromText recipeText) p)
+    case nameText of
+      "" -> Nothing
+      n | n == setupNodeName -> Just (SetupNode p)
+      _ -> Just (RecipeNode (recipeNameFromText nameText) p)

@@ -32,7 +32,7 @@ spec = describe "toProcessCompose" $ do
   it "emits one process per (recipe, platform) when a recipe is fanned out" $ do
     let g =
           G.vertices
-            [NodeId "build" X86_64Linux, NodeId "build" Aarch64Darwin]
+            [RecipeNode "build" X86_64Linux, RecipeNode "build" Aarch64Darwin]
         yaml = encodeMulti (const Nothing) g
     yaml `shouldContain` "build@x86_64-linux"
     yaml `shouldContain` "build@aarch64-darwin"
@@ -43,8 +43,8 @@ spec = describe "toProcessCompose" $ do
     -- (and vice versa). Cross-platform edges are a fanout bug.
     let g =
           G.edges
-            [ (NodeId "root" X86_64Linux, NodeId "build" X86_64Linux),
-              (NodeId "root" Aarch64Darwin, NodeId "build" Aarch64Darwin)
+            [ (RecipeNode "root" X86_64Linux, RecipeNode "build" X86_64Linux),
+              (RecipeNode "root" Aarch64Darwin, RecipeNode "build" Aarch64Darwin)
             ]
         yaml = encodeMulti (const Nothing) g
     -- root@x86_64-linux's depends_on block contains build@x86_64-linux
@@ -64,7 +64,7 @@ encodeYaml mkLog =
   BS8.unpack . Y.encode $
     toProcessCompose (const "echo hi") (const Nothing) mkLog graph
   where
-    graph = G.vertex (NodeId "r" X86_64Linux)
+    graph = G.vertex (RecipeNode "r" X86_64Linux)
 
 -- | Variant of 'encodeYaml' that takes a caller-supplied graph so a
 -- test can exercise multi-platform fanout shapes.

@@ -39,8 +39,7 @@ module CI.Verdict
   )
 where
 
-import CI.Node (NodeId)
-import CI.NodeKind (isSetupNode)
+import CI.Node (NodeId (..))
 import CI.ProcessCompose.Events (ProcessState (..), TerminalStatus (..), psToTerminalStatus)
 import Data.Foldable (for_)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
@@ -161,8 +160,8 @@ verdictCode outcomes
 -- supplies the resolver so this module doesn't depend on the
 -- "CI.Hosts" vocabulary directly.
 --
--- Synthetic setup nodes ('CI.NodeKind.isSetupNode') are filtered out
--- of the per-node lines and the @n of m@ count: they're internal
+-- Synthetic setup nodes ('SetupNode') are filtered out of the
+-- per-node lines and the @n of m@ count: they're internal
 -- plumbing (per-platform bundle ship, drv copy), not user
 -- recipes. This matches 'CI.CommitStatus.seedPending' /
 -- 'CI.CommitStatus.postStatusFor', which already skip setup
@@ -182,7 +181,9 @@ verdictSummary mkHost outcomes =
     <> map nodeLine entries
     <> ["───────────────────────────────────────────────", verdictLine]
   where
-    userNodes = Map.filterWithKey (\n _ -> not (isSetupNode n)) outcomes
+    userNodes = Map.filterWithKey (\n _ -> isRecipe n) outcomes
+    isRecipe (RecipeNode _ _) = True
+    isRecipe (SetupNode _) = False
     entries = [(display n, mkHost n, o) | (n, o) <- Map.toAscList userNodes]
     failedCount = length (filter (\(_, _, o) -> o /= Succeeded) entries)
     nodeWidth = maximum (0 : [T.length n | (n, _, _) <- entries])

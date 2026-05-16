@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -5,23 +6,14 @@
 -- pinned worktree, or remotely against a shared checkout that's
 -- set up once per host per run.
 --
--- Two orthogonal axes meet here:
---
---   * 'Transport' — *where* the command runs ('Local' or 'Ssh ...').
---     Varies with connection mechanism (new runner type, different
---     transport).
---   * 'CommandShape' — *what* command this node runs ('SetupCommand'
---     for the per-platform bundle ship, 'RecipeCommand' for the
---     user recipe). Varies with the set of node kinds the
---     orchestrator schedules.
---
--- 'commandFor' takes both. The caller ('CI.Pipeline.commandForNode')
--- already knows which kind it's emitting (it built the setup nodes
--- into the graph) and passes the shape explicitly, classifying the
--- 'NodeId' via 'CI.NodeKind.isSetupNode'; 'Transport' no longer has
--- to re-derive the node kind from a 'NodeId'. The cross-module
--- invariant — that exactly one site discriminates setup vs recipe —
--- lives at that 'commandForNode' call site, not in 'Transport'.
+-- 'Transport' is the *where* axis ('Local' vs 'Ssh ...'). The
+-- *what* axis — setup-vs-recipe — is structural on 'NodeId' itself
+-- (a closed sum over 'SetupNode' / 'RecipeNode'), so 'commandFor'
+-- pattern-matches on the node and the pair of pattern matches
+-- ('Transport' × 'NodeId') is exhaustive at compile time. No
+-- parallel @CommandShape@ sum, no @isSetupNode@ predicate, no
+-- contract-error branch for the impossible (Local, setup) pair —
+-- it's pattern-matched away.
 --
 -- Remote setup nodes ship the @just@ derivation, bundle @HEAD@
 -- across, and clone into
@@ -41,7 +33,6 @@
 -- @~\/.ssh\/config@ (incus instances are reached via an ssh alias).
 module CI.Transport
   ( Transport (..),
-    CommandShape (..),
     commandFor,
     remoteRunner,
   )
@@ -51,6 +42,7 @@ import CI.Git (Sha)
 import CI.Hosts (Host)
 import CI.Justfile (RecipeName, recipeCommand)
 import CI.Nix (realisedJust, shipJustDrv)
+import CI.Node (NodeId (..))
 import CI.Platform (Platform)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -62,52 +54,30 @@ import Data.Text.Display (display)
 --     worktree, so the @just@ subprocess just runs in cwd.
 --   * 'Ssh' — over @ssh -T \<host\>@ against the shared cached
 --     checkout under @\$HOME\/.cache\/ci\/\<short-sha\>\/\<platform\>@.
---
--- Setup-vs-recipe selection is *not* encoded here — that's the
--- 'CommandShape' axis, passed alongside.
 data Transport
   = Local
   | Ssh Host Sha Platform
 
--- | What command this node runs, independent of where:
+-- | The shell command process-compose runs for one node. The
+-- pattern-match is exhaustive across both axes — 'Transport' (Local /
+-- Ssh) × 'NodeId' (SetupNode / RecipeNode) — so the four cases are
+-- the complete contract:
 --
---   * 'SetupCommand' — the per-platform drv-copy + bundle + clone
---     dance. Only meaningful on an 'Ssh' transport; on 'Local'
---     there's nothing to ship.
---   * 'RecipeCommand' — invoke the named user recipe via @just@.
---
--- Built explicitly by 'CI.Pipeline.commandForNode' from the
--- fanout it already constructed, so 'commandFor' doesn't re-derive
--- the choice from node identity.
-data CommandShape
-  = SetupCommand
-  | RecipeCommand RecipeName
-
--- | The shell command process-compose runs for one node. The two
--- axes are independent:
---
---   * @(Local, RecipeCommand r)@ — bare @just@ invocation in cwd.
---   * @(Local, SetupCommand)@ — no-op; locally there's nothing to
---     ship. We surface this as an explicit error rather than a
---     silent empty command so a misuse upstream is loud, not
---     silently broken.
---   * @(Ssh ..., SetupCommand)@ — drv-copy + bundle + clone.
---   * @(Ssh ..., RecipeCommand r)@ — cd into the cached checkout
+--   * @(Local, RecipeNode r _)@ — bare @just@ invocation in cwd.
+--   * @(Local, SetupNode _)@ — not produced by 'CI.Pipeline.fanOut'
+--     (setup nodes are emitted only for remote platforms). The
+--     match is left to GHC's incomplete-patterns warning so a
+--     misuse upstream becomes a compile-time signal, not a runtime
+--     'error'.
+--   * @(Ssh ..., SetupNode p)@ — drv-copy + bundle + clone.
+--   * @(Ssh ..., RecipeNode r _)@ — cd into the cached checkout
 --     and run the realised @just@.
---
--- The 'Local'+'SetupCommand' impossibility comes from the
--- fanout: setup nodes are emitted only for remote platforms (see
--- 'CI.Pipeline.fanOut'), so 'CI.Pipeline.commandForNode' only ever
--- pairs 'SetupCommand' with 'Ssh'. The 'error' is a contract
--- guard, not a runtime branch.
-commandFor :: Transport -> CommandShape -> Text
-commandFor Local (RecipeCommand r) = recipeCommand r
-commandFor Local SetupCommand =
-  error "internal error: SetupCommand on Local transport (setup nodes are emitted only for remote platforms)"
-commandFor (Ssh host sha targetPlat) SetupCommand =
-  setupCommand host sha targetPlat
-commandFor (Ssh host sha targetPlat) (RecipeCommand r) =
-  recipeRemoteCommand host sha targetPlat r
+commandFor :: Transport -> NodeId -> Text
+commandFor Local (RecipeNode r _) = recipeCommand r
+commandFor (Ssh host sha targetPlat) (SetupNode _) = setupCommand host sha targetPlat
+commandFor (Ssh host sha targetPlat) (RecipeNode r _) = recipeRemoteCommand host sha targetPlat r
+commandFor Local (SetupNode _) =
+  error "internal error: SetupNode on Local transport (fanOut emits setup nodes only for remote platforms)"
 
 -- | The shell-tokens prefix that runs a command on this 'Host':
 -- @ssh -T \<host\>@. @-T@ suppresses TTY allocation so binary stdin

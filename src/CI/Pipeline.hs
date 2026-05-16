@@ -30,13 +30,12 @@ import CI.Hosts (Hosts, hostsPlatforms, loadHosts, lookupHost)
 import CI.Justfile (Attribute (..), Recipe (..), RecipeName, fetchDump)
 import qualified CI.Justfile as J
 import CI.LogPath (logDirFor, logPathFor, platformDir)
-import CI.Node (NodeId (..), parseNodeId)
-import CI.NodeKind (isSetupNode, setupRecipe)
+import CI.Node (NodeId (..), nodePlatform, parseNodeId)
 import CI.Platform (Platform, localPlatform, platformOs)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processGraph, processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
 import CI.Root (findRoot)
-import CI.Transport (CommandShape (..), Transport (..), commandFor)
+import CI.Transport (Transport (..), commandFor)
 import CI.Verdict (exitWithVerdict, newOutcomes, recordOutcome)
 import Control.Concurrent.Async (link, wait, withAsync)
 import Control.Monad (void)
@@ -198,7 +197,7 @@ toMermaid g =
 -- platform whose subdir doesn't exist fails the spawn.
 createPlatformDirs :: FilePath -> [NodeId] -> IO ()
 createPlatformDirs logDir nodes =
-  mapM_ (createDirectoryIfMissing True . platformDir logDir) (nub [n.platform | n <- nodes])
+  mapM_ (createDirectoryIfMissing True . platformDir logDir) (nub (nodePlatform <$> nodes))
 
 -- | Enforce the wire-event-identity invariant at the single site that
 -- owns it: parse @ps.name@ as a 'NodeId' and run @action@ only if it
@@ -253,29 +252,25 @@ data RunMode
 -- than two parallel where-clauses that have to stay in lockstep
 -- across future 'RunMode' constructors.
 --
--- The working-dir callback is per-node (not uniform): setup nodes
--- are @ssh -T \<host\>@ launcher processes whose local cwd is
--- ignored by ssh, so the worktree pin would be a misleading
--- no-op in the emitted YAML. They get 'Nothing' regardless of
--- mode; user recipes get 'Just worktreePath' in 'StrictRun' and
--- 'Nothing' elsewhere.
+-- The working-dir callback opts setup nodes out of the worktree pin:
+-- they're @ssh -T \<host\>@ launcher processes whose local cwd is
+-- ignored by ssh, so 'Just worktreePath' would be a misleading no-op
+-- in the emitted YAML. The setup-vs-recipe choice is now structural
+-- ('NodeId' pattern match), not a name-based predicate.
 --
--- The log-location callback intentionally does *not* filter setup
--- nodes the way 'CI.CommitStatus' and 'CI.Verdict' do for their
--- user-facing surfaces. The reporting filter exists so the PR
--- author doesn't see internal plumbing on their checks page or
--- in the summary line; the log file exists for debugging when
--- setup *fails*. Hiding setup-node output would leave a failed
--- bundle ship or drv copy with nowhere to look. The two policies
--- ("user-facing report" vs "debug log on disk") differ
--- deliberately — same predicate, different consumers, different
--- visibility goals.
+-- The log-location callback intentionally does *not* skip setup nodes
+-- the way 'CI.CommitStatus' and 'CI.Verdict' do for their user-facing
+-- surfaces. The reporting filter exists so the PR author doesn't see
+-- internal plumbing on their checks page or in the summary line; the
+-- log file exists for debugging when setup *fails*. Hiding setup-node
+-- output would leave a failed bundle ship or drv copy with nowhere to
+-- look. Same predicate, different consumers, different visibility
+-- goals.
 yamlPathsFor :: RunMode -> (NodeId -> Maybe FilePath, NodeId -> Maybe FilePath)
 yamlPathsFor (StrictRun wt ld) = (workingDirFor wt, Just . logPathFor ld)
   where
-    workingDirFor w n
-      | isSetupNode n = Nothing
-      | otherwise = Just w
+    workingDirFor _ (SetupNode _) = Nothing
+    workingDirFor w (RecipeNode _ _) = Just w
 yamlPathsFor _ = (const Nothing, const Nothing)
 
 -- | Walk @just --dump@ → root → reachable subgraph → topologically
@@ -383,20 +378,20 @@ fanOut :: Platform -> Hosts -> [Platform] -> G.AdjacencyMap RecipeName -> G.Adja
 fanOut localPlat hosts platforms g =
   recipeVertices
     `G.overlay` G.edges recipeEdges
-    `G.overlay` G.vertices setupNodes
+    `G.overlay` G.vertices setupVertices
     `G.overlay` G.edges setupEdges
   where
-    recipeVertices = G.vertices [NodeId r p | r <- G.vertexList g, p <- platforms]
-    recipeEdges = [(NodeId r p, NodeId d p) | (r, d) <- G.edgeList g, p <- platforms]
+    recipeVertices = G.vertices [RecipeNode r p | r <- G.vertexList g, p <- platforms]
+    recipeEdges = [(RecipeNode r p, RecipeNode d p) | (r, d) <- G.edgeList g, p <- platforms]
     -- Remote platforms: anything with a hosts entry runs over SSH.
     -- A local platform with a hosts entry counts as remote (the
     -- host-override case).
     remotePlatforms = filter (`isRemote` (localPlat, hosts)) platforms
-    setupNodes = [NodeId setupRecipe p | p <- remotePlatforms]
+    setupVertices = [SetupNode p | p <- remotePlatforms]
     -- Every recipe node on a remote platform depends on that
     -- platform's setup node.
     setupEdges =
-      [ (NodeId r p, NodeId setupRecipe p)
+      [ (RecipeNode r p, SetupNode p)
       | r <- G.vertexList g,
         p <- remotePlatforms
       ]
@@ -416,40 +411,31 @@ isRemote p (localPlat, hosts) =
 -- remote.
 data RemoteLaneState = NoRemoteLanes | RemoteLanes Sha
 
--- | Per-node command construction. Picks both transport and
--- command shape from what the orchestrator already knows:
---
---   * Transport — Hosts-entry present → SSH (overrides local inline
---     execution even when @node.platform == localPlat@); no entry
---     and platform matches local → 'Local'; no entry and non-local
---     platform is unreachable by the 'pipelinePlatformsFor'
---     invariant.
---   * Shape — 'isSetupNode' picks 'SetupCommand' (the per-platform
---     bundle/drv-ship choreography); every other node is
---     'RecipeCommand'. The setup-vs-recipe choice is made here at
---     the same site that owns the fanout, instead of being re-derived
---     inside 'CI.Transport.commandFor'.
+-- | Per-node command construction. Picks the transport from what the
+-- orchestrator already knows (hosts.json entry → SSH; bare local
+-- platform → 'Local') and hands the typed 'NodeId' to
+-- 'CI.Transport.commandFor', which pattern-matches the kind
+-- structurally — no parallel @CommandShape@ sum, no
+-- @isSetupNode@-derived branch.
 commandForNode :: RemoteLaneState -> Platform -> Hosts -> NodeId -> T.Text
-commandForNode remoteLaneState localPlat hosts node = case lookupHost node.platform hosts of
+commandForNode remoteLaneState localPlat hosts node = case lookupHost plat hosts of
   Just h -> case remoteLaneState of
-    RemoteLanes sha -> commandFor (Ssh h sha node.platform) shape
+    RemoteLanes sha -> commandFor (Ssh h sha plat) node
     NoRemoteLanes -> shaContractError
   Nothing
-    | node.platform == localPlat -> commandFor Local shape
+    | plat == localPlat -> commandFor Local node
     | otherwise -> hostContractError
   where
-    shape
-      | isSetupNode node = SetupCommand
-      | otherwise = RecipeCommand node.recipe
+    plat = nodePlatform node
     hostContractError =
       error $
         "internal error: no SSH host for "
-          <> T.unpack (display node.platform)
+          <> T.unpack (display plat)
           <> " (pipelinePlatformsFor should have excluded this)"
     shaContractError =
       error $
         "internal error: hosts entry for "
-          <> T.unpack (display node.platform)
+          <> T.unpack (display plat)
           <> " but no SHA resolved (buildProcessCompose hasRemote logic broken)"
 
 -- | Build the @NodeId -> host-label@ resolver the verdict summary
@@ -465,7 +451,7 @@ commandForNode remoteLaneState localPlat hosts node = case lookupHost node.platf
 mkHostFor :: IO (NodeId -> T.Text)
 mkHostFor = do
   hosts <- loadHosts
-  pure $ \n -> case lookupHost n.platform hosts of
+  pure $ \n -> case lookupHost (nodePlatform n) hosts of
     Just h -> display h
     Nothing -> "local"
 

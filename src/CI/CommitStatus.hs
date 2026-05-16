@@ -11,9 +11,9 @@
 --     every expected check appears at once, and 'postStatusFor'
 --     translates each in-flight 'ProcessState' event into the
 --     matching @Pending@ / @Success@ / @Failure@ / @Error@ update.
---   * The setup-node filter — internal plumbing nodes
---     ('CI.NodeKind.isSetupNode') are excluded from both the seed
---     and the per-event posts, matching the same filter
+--   * The setup-node filter — internal plumbing nodes ('SetupNode')
+--     are excluded from both the seed and the per-event posts via a
+--     pattern match on 'NodeId', matching the same filter
 --     'CI.Verdict.verdictSummary' applies so the PR checks page and
 --     the local CLI summary agree on what counts as user-facing.
 --   * The human-readable description per state (suffixed with the
@@ -32,8 +32,7 @@ module CI.CommitStatus (postStatusFor, seedPending, terminalToCommitStatus) wher
 import CI.Gh (CommitStatus (..), CommitStatusPost (..), Context, Repo, contextFrom, postCommitStatus)
 import CI.Git (Sha)
 import CI.LogPath (logPathFor)
-import CI.Node (NodeId)
-import CI.NodeKind (isSetupNode)
+import CI.Node (NodeId (..))
 import CI.ProcessCompose.Events (ProcessState (..), ProcessStatus (..), TerminalStatus (..), psToTerminalStatus)
 import Control.Concurrent.Async (forConcurrently_)
 import Data.Foldable (for_)
@@ -71,15 +70,14 @@ import System.IO (hPutStrLn, stderr)
 -- swallowed — the node's exit code must not depend on whether a
 -- status post succeeded.
 postStatusFor :: Repo -> Sha -> FilePath -> NodeId -> ProcessState -> IO ()
-postStatusFor repo sha logDir node ps
-  -- Setup nodes are internal plumbing (bundle ship, drv copy);
-  -- the PR doesn't care whether @_ci-setup\@<platform>@ passed
-  -- or failed, only whether the *user's* recipes did. Skip the
-  -- GH post for these; the verdict summary still shows them.
-  | isSetupNode node = pure ()
-  | otherwise =
-      for_ (psToCommitStatus ps) $ \cs ->
-        postOne repo sha node cs $ describe cs $ logPathFor logDir node
+postStatusFor _ _ _ (SetupNode _) _ = pure ()
+-- \^ Setup nodes are internal plumbing (bundle ship, drv copy); the
+-- PR doesn't care whether @_ci-setup\@\<platform\>@ passed or failed,
+-- only whether the *user's* recipes did. The verdict summary still
+-- shows them.
+postStatusFor repo sha logDir node@(RecipeNode _ _) ps =
+  for_ (psToCommitStatus ps) $ \cs ->
+    postOne repo sha node cs $ describe cs $ logPathFor logDir node
 
 -- | Pre-seed every node with a 'Pending' commit status at startup —
 -- one parallel @gh api@ POST per node, all joined before this returns.
@@ -100,7 +98,7 @@ seedPending repo sha logDir nodes =
   -- Same filter as 'postStatusFor': setup nodes are internal,
   -- not user-visible recipes. Seeding them as @pending@ would
   -- leave stray internal-named checks on the PR.
-  forConcurrently_ (filter (not . isSetupNode) nodes) $ \n ->
+  forConcurrently_ [n | n@(RecipeNode _ _) <- nodes] $ \n ->
     postOne repo sha n Pending $ seedDescription $ logPathFor logDir n
 
 -- | Issue one commit-status POST with a caller-supplied description and

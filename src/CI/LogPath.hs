@@ -14,7 +14,7 @@
 module CI.LogPath (logDirFor, platformDir, logPathFor) where
 
 import CI.Git (Sha)
-import CI.Node (NodeId (..))
+import CI.Node (NodeId, nodeName, nodePlatform)
 import CI.Platform (Platform)
 import qualified Data.Text as T
 import Data.Text.Display (display)
@@ -54,4 +54,4 @@ platformDir logDir p = logDir </> T.unpack (display p)
 -- decompositions so they stay aligned without typeclass coincidence.
 logPathFor :: FilePath -> NodeId -> FilePath
 logPathFor logDir n =
-  platformDir logDir n.platform </> T.unpack (display n.recipe) <> ".log"
+  platformDir logDir (nodePlatform n) </> T.unpack (nodeName n) <> ".log"

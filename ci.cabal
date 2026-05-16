@@ -18,7 +18,6 @@ library
                       CI.LogPath
                       CI.Nix
                       CI.Node
-                      CI.NodeKind
                       CI.Pipeline
                       CI.Platform
                       CI.ProcessCompose
