@@ -29,6 +29,9 @@ spec = do
     it "splits on the last @ (recipes never contain @, platforms never contain ::)" $
       parseNodeId "a::b::c@aarch64-darwin" `shouldBe` Just (RecipeNode "a::b::c" Aarch64Darwin)
 
+    it "splits on the LAST @ even when the recipe name itself contains @" $
+      parseNodeId "weird@name@x86_64-linux" `shouldBe` Just (RecipeNode "weird@name" X86_64Linux)
+
     it "recognises the reserved setup-node wire name" $
       parseNodeId "_ci-setup@x86_64-linux" `shouldBe` Just (SetupNode X86_64Linux)
 
