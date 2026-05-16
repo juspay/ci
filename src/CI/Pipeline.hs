@@ -11,6 +11,7 @@ module CI.Pipeline
     ensureRunDir,
     runLocal,
     runStrict,
+    runGraph,
     buildProcessCompose,
   )
 where
@@ -27,7 +28,7 @@ import CI.LogPath (logDirFor, logPathFor, platformDir)
 import CI.Node (NodeId (..), parseNodeId)
 import CI.NodeKind (isSetupNode, setupRecipe)
 import CI.Platform (Platform, localPlatform, platformOs)
-import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processNames, runProcessCompose, toProcessCompose)
+import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processGraph, processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
 import CI.Root (findRoot)
 import CI.Transport (CommandShape (..), Transport (..), commandFor)
@@ -40,6 +41,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (isJust)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
+import qualified Data.Text.IO as TIO
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.Exit (die)
 import System.FilePath ((</>))
@@ -144,6 +146,45 @@ runStrict dirs tui passthrough = do
       void $
         runProcessCompose (UpInvocation dirs.sock dirs.pcLog dirs.pcYaml tui passthrough) pc
     exitWithVerdict hostFor outcomes
+
+-- | Print the assembled pipeline's dependency graph to stdout in
+-- Mermaid @flowchart@ syntax. Uses the same 'DumpRun' shape
+-- @dump-yaml@ uses, so the rendered graph reflects the full fanout
+-- without prompting for hosts or shelling out to git.
+--
+-- Pc's own @process-compose graph@ subcommand is server-only — it
+-- queries a running pc instance over HTTP/UDS rather than reading a
+-- YAML file — so it can't render the graph standalone. Emitting
+-- Mermaid here keeps the command useful outside a live run; pipe
+-- through @mermaid-ascii@ (or paste into <https://mermaid.live>) to
+-- visualise.
+--
+-- @mFmt@ is accepted for future format expansion (graphviz dot, plain
+-- ASCII tree) but currently only @mermaid@ is emitted; non-mermaid
+-- values are ignored.
+runGraph :: RunDir -> Maybe String -> IO ()
+runGraph _dirs _mFmt = do
+  pc <- buildProcessCompose DumpRun
+  TIO.putStrLn (toMermaid (processGraph pc))
+
+-- | Render an adjacency map of 'NodeId's as Mermaid @flowchart TD@.
+-- Vertex IDs are sanitized to mermaid-safe alphanumeric+underscore
+-- (the @\<recipe\>\@\<platform\>@ display form is preserved verbatim in
+-- the quoted label so the rendering reads the same as everywhere
+-- else).
+toMermaid :: G.AdjacencyMap NodeId -> T.Text
+toMermaid g =
+  T.intercalate "\n" $
+    "flowchart TD"
+      : [nodeLine n | n <- G.vertexList g]
+      <> [edgeLine a b | (a, b) <- G.edgeList g]
+  where
+    sanitize c
+      | c == '@' || c == ':' || c == '-' || c == '.' = '_'
+      | otherwise = c
+    nodeId n = T.map sanitize (display n)
+    nodeLine n = "  " <> nodeId n <> "[\"" <> display n <> "\"]"
+    edgeLine a b = "  " <> nodeId a <> " --> " <> nodeId b
 
 -- | Materialise every @.ci\/\<sha\>\/\<platform\>\/@ subdirectory the
 -- pipeline will route logs to, before process-compose spawns. pc

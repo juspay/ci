@@ -16,6 +16,7 @@ module CI.ProcessCompose
     ProcessCompose,
     toProcessCompose,
     processNames,
+    processGraph,
 
     -- * Invocation
     UpInvocation (..),
@@ -213,3 +214,15 @@ runProcessCompose up pc = do
   withCreateProcess cp $ \_ _ _ ph -> waitForProcess ph
   where
     cp = proc processComposeBin (toUpArgs up)
+
+-- | Recover the dependency graph from an assembled 'ProcessCompose'.
+-- Useful for renderers that want the typed adjacency map back ('CI.Pipeline.runGraph'
+-- emits mermaid syntax from it) — pc's own @graph@ subcommand is
+-- server-only (it hits a running pc's HTTP API rather than reading
+-- a YAML file), so re-deriving the structure here is the path
+-- that works without a live run.
+processGraph :: ProcessCompose -> G.AdjacencyMap NodeId
+processGraph (ProcessCompose ps) =
+  G.vertices (Map.keys ps)
+    `G.overlay` G.edges
+      [(name, dep) | (name, p) <- Map.toList ps, dep <- Map.keys p.depends_on]
