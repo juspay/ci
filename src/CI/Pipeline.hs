@@ -14,6 +14,7 @@ module CI.Pipeline
     runLocal,
     runStrict,
     runGraph,
+    runDumpYaml,
 
     -- * Pipeline assembly
     RunMode (..),
@@ -27,7 +28,7 @@ import CI.Gh (viewRepo)
 import CI.Git (Sha, ensureCleanTree, resolveSha, shaPlaceholder, withSnapshotWorktree)
 import CI.Graph (lowerToRunnerGraph, reachableSubgraph)
 import CI.Hosts (Hosts, hostsPlatforms, loadHosts, lookupHost)
-import CI.Justfile (Attribute (..), Recipe (..), RecipeName, fetchDump)
+import CI.Justfile (Attribute (..), Recipe (..), RecipeName, fetchDump, recipeCommand)
 import qualified CI.Justfile as J
 import CI.LogPath (logDirFor, logPathFor, platformDir)
 import CI.Node (NodeId (..), nodePlatform, parseNodeId, toMermaid)
@@ -35,10 +36,11 @@ import CI.Platform (Platform, localPlatform, platformOs)
 import CI.ProcessCompose (ProcessCompose, UpInvocation (..), processGraph, processNames, runProcessCompose, toProcessCompose)
 import CI.ProcessCompose.Events (ProcessState (..), subscribeStates)
 import CI.Root (findRoot)
-import CI.Transport (localRecipeCommand, sshRecipeCommand, sshSetupCommand)
+import CI.Transport (sshRecipeCommand, sshSetupCommand)
 import CI.Verdict (exitWithVerdict, newOutcomes, recordOutcome)
 import Control.Concurrent.Async (link, wait, withAsync)
 import Control.Monad (void)
+import qualified Data.ByteString as BS
 import Data.Foldable (for_)
 import Data.List (nub)
 import qualified Data.Map.Strict as Map
@@ -46,6 +48,7 @@ import Data.Maybe (isJust)
 import qualified Data.Text as T
 import Data.Text.Display (Display, display)
 import qualified Data.Text.IO as TIO
+import qualified Data.Yaml as Y
 import System.Directory (createDirectoryIfMissing, getCurrentDirectory)
 import System.Exit (die)
 import System.FilePath ((</>))
@@ -171,6 +174,16 @@ runGraph = do
   hosts <- loadHosts
   pc <- buildProcessCompose hosts DumpRun
   TIO.putStrLn (toMermaid (processGraph pc))
+
+-- | Emit the assembled process-compose YAML to stdout. Uses 'DumpRun'
+-- mode so no host resolution side-effects occur — safe to invoke
+-- offline, outside a git checkout, or from a remote whose
+-- @hosts.json@ has no entry for the other platform.
+runDumpYaml :: IO ()
+runDumpYaml = do
+  hosts <- loadHosts
+  pc <- buildProcessCompose hosts DumpRun
+  BS.putStr (Y.encode pc)
 
 -- | Materialise every @.ci\/\<sha\>\/\<platform\>\/@ subdirectory the
 -- pipeline will route logs to, before process-compose spawns. pc
@@ -399,7 +412,7 @@ isRemote p (localPlat, hosts) =
 -- structurally absent — there is no @localSetupCommand@ — so the
 -- match is total over the cases the fanout actually produces:
 --
---   * @(RecipeNode, no host, local platform)@ → 'localRecipeCommand'
+--   * @(RecipeNode, no host, local platform)@ → 'CI.Justfile.recipeCommand'
 --   * @(RecipeNode, host)@                    → 'sshRecipeCommand'
 --   * @(SetupNode, host)@                     → 'sshSetupCommand'
 --
@@ -409,7 +422,7 @@ isRemote p (localPlat, hosts) =
 commandForNode :: Sha -> Platform -> Hosts -> NodeId -> T.Text
 commandForNode sha localPlat hosts node = case (node, lookupHost plat hosts) of
   (RecipeNode r _, Nothing)
-    | plat == localPlat -> localRecipeCommand r
+    | plat == localPlat -> recipeCommand r
     | otherwise -> hostContractError
   (RecipeNode r _, Just h) -> sshRecipeCommand h sha plat r
   (SetupNode _, Just h) -> sshSetupCommand h sha plat

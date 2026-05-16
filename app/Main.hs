@@ -1,4 +1,4 @@
-{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 -- | Argv parsing + dispatch to 'CI.Pipeline'. Two subcommands:
@@ -12,11 +12,8 @@
 -- process-compose's TUI); other subcommands ignore it silently.
 module Main where
 
-import CI.Hosts (loadHosts)
-import CI.Pipeline (RunMode (..), buildProcessCompose, ensureRunDir, runGraph, runLocal, runStrict)
+import CI.Pipeline (ensureRunDir, runDumpYaml, runGraph, runLocal, runStrict)
 import Control.Applicative (many, (<|>))
-import qualified Data.ByteString as BS
-import qualified Data.Yaml as Y
 import Options.Applicative
   ( Parser,
     ParserInfo,
@@ -51,18 +48,15 @@ data Command
 
 main :: IO ()
 main = do
-  Args {tui, cmd} <- execParser parserInfo
-  case cmd of
+  args <- execParser parserInfo
+  case args.cmd of
     Run passthrough -> do
       dirs <- ensureRunDir
       strict <- (== Just "true") <$> lookupEnv "CI"
       if strict
-        then runStrict dirs tui passthrough
-        else runLocal dirs tui passthrough
-    DumpYaml -> do
-      hosts <- loadHosts
-      pc <- buildProcessCompose hosts DumpRun
-      BS.putStr (Y.encode pc)
+        then runStrict dirs args.tui passthrough
+        else runLocal dirs args.tui passthrough
+    DumpYaml -> runDumpYaml
     Graph -> runGraph
 
 parserInfo :: ParserInfo Args
