@@ -25,7 +25,7 @@ module CI.ProcessCompose
 where
 
 import qualified Algebra.Graph.AdjacencyMap as G
-import CI.Node (NodeId)
+import CI.Node (NodeId (..))
 import Data.Aeson (ToJSON (..), camelTo2, defaultOptions, genericToJSON)
 import Data.Aeson.Types (Options (..))
 import qualified Data.ByteString as BS
@@ -63,6 +63,16 @@ newtype ProcessCompose = ProcessCompose {processes :: Map.Map NodeId Process}
 -- | One @processes.<name>@ entry. Field names match @process-compose@'s YAML keys.
 data Process = Process
   { command :: Text,
+    -- | Which group this process belongs to in pc's typed
+    --     @namespace@ vocabulary. Either @"setup"@ (internal
+    --     plumbing — bundle ship, drv copy) or @"recipes"@ (user
+    --     work). The kind is derived structurally from the 'NodeId'
+    --     sum at emission time, so the namespace label and the
+    --     'NodeId' constructor agree by construction. The label is
+    --     the pc-side seam that replaces the historical
+    --     name-prefix sniff (@_ci-setup@) for the setup/recipe
+    --     distinction at the wire layer.
+    namespace :: Text,
     depends_on :: Map.Map NodeId Dependency,
     availability :: Availability,
     -- | When set, process-compose @chdir@s the spawned process into this
@@ -157,11 +167,20 @@ toProcessCompose mkCommand mkWorkingDir mkLogLocation g =
     mkProcess node =
       Process
         { command = mkCommand node,
+          namespace = namespaceFor node,
           depends_on = Map.fromSet (const (Dependency ProcessCompletedSuccessfully)) (G.postSet node g),
           availability = Availability {restart = No, exit_on_skipped = False},
           working_dir = mkWorkingDir node,
           log_location = mkLogLocation node
         }
+
+-- | The pc namespace label for a 'NodeId'. Derived structurally from
+-- the closed sum so the label and the constructor can never disagree.
+-- Internal — exported only as a side effect of being used inside the
+-- pure 'toProcessCompose' encoder; consumers shouldn't need this.
+namespaceFor :: NodeId -> Text
+namespaceFor (SetupNode _) = "setup"
+namespaceFor (RecipeNode _ _) = "recipes"
 
 -- | The set of node identities in a 'ProcessCompose'. Returned in
 -- 'Map' key order so iteration is stable. Useful for pre-seeding
