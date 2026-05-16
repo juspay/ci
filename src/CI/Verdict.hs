@@ -37,7 +37,9 @@ module CI.Verdict
   )
 where
 
+import CI.Justfile (RecipeName)
 import CI.Node (NodeId (..))
+import CI.Platform (Platform)
 import CI.ProcessCompose.Events (ProcessState (..), TerminalStatus (..), psToTerminalStatus)
 import Data.Foldable (for_)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
@@ -146,52 +148,101 @@ verdictCode outcomes
   | all (== Just Succeeded) (Map.elems outcomes) = ExitSuccess
   | otherwise = ExitFailure 1
 
--- | The pipeline's printable per-node summary: a header, one
--- column-aligned line per node (@\<recipe\>\@\<platform\>  \<host\>  \<outcome\>@), a
--- divider, and a one-line verdict count. Pure; companion to
--- 'verdictCode' over the same snapshot.
+-- | The pipeline's printable summary, structured in two sections:
+--
+--   * @Setup@ — one line per remote 'SetupNode' showing host and
+--     outcome. Surfaces provisioning failures explicitly so a failed
+--     bundle/drv ship doesn't hide behind cascading recipe lines.
+--     Omitted when there are no setup nodes (local-only runs).
+--   * @Recipes@ — recipes grouped by platform lane. A lane whose
+--     setup failed (or never reached terminal) collapses to a single
+--     @"not scheduled (setup failed)"@ line instead of repeating
+--     @"did not run"@ per recipe; lanes whose setup succeeded (or
+--     had no setup at all) list each recipe's outcome.
+--
+-- Pure; companion to 'verdictCode' over the same snapshot.
 --
 -- The host column shows where each node ran ("local" for the
 -- orchestrator-local lane, the SSH host name otherwise). Caller
 -- supplies the resolver so this module doesn't depend on the
 -- "CI.Hosts" vocabulary directly.
 --
--- A 'Nothing' outcome — node was scheduled but never reached a
--- terminal event — renders as @"did not run"@. This covers both
--- "pc crashed before scheduling" and the upstream-cascade case
--- (when pc emits @Skipped@ events for dep-failed nodes,
--- 'psToTerminalStatus' folds them to 'TsFailed' if pc still routed
--- them; nodes pc never scheduled at all stay 'Nothing').
---
--- Synthetic setup nodes ('SetupNode') are filtered out of the
--- per-node lines and the @n of m@ count: they're internal plumbing
--- (per-platform bundle ship, drv copy), not user recipes. This
--- matches 'CI.CommitStatus.seedPending' / 'CI.CommitStatus.postStatusFor',
--- which skip setup nodes from GitHub commit-status posts — so the PR
--- reviewer on GitHub and the local CLI user see the same set of
--- user-facing nodes.
+-- A 'Nothing' outcome on a recipe — scheduled but no terminal event
+-- reached us — renders as @"did not run"@ when the lane's setup
+-- succeeded; if the setup itself failed, the whole lane folds into
+-- the @"not scheduled"@ summary and the recipe's individual outcome
+-- is suppressed.
 verdictSummary :: (NodeId -> Text) -> Map NodeId (Maybe RecipeOutcome) -> [Text]
 verdictSummary mkHost outcomes =
   ["── ci run summary ─────────────────────────────"]
-    <> map nodeLine entries
+    <> setupSection
+    <> recipeSection
     <> ["───────────────────────────────────────────────", verdictLine]
   where
-    userNodes = Map.filterWithKey (\n _ -> isRecipe n) outcomes
-    isRecipe (RecipeNode _ _) = True
-    isRecipe (SetupNode _) = False
-    entries = [(display n, mkHost n, o) | (n, o) <- Map.toAscList userNodes]
-    failedCount = length (filter (\(_, _, o) -> o /= Just Succeeded) entries)
-    nodeWidth = maximum (0 : [T.length n | (n, _, _) <- entries])
-    hostWidth = maximum (0 : [T.length h | (_, h, _) <- entries])
+    -- Split by kind so the two sections render from disjoint inputs.
+    setupOutcomes = [(p, o) | (SetupNode p, o) <- Map.toAscList outcomes]
+    recipeOutcomes = [(r, p, o) | (RecipeNode r p, o) <- Map.toAscList outcomes]
+
+    -- Platforms whose setup failed (or never reached terminal). Used
+    -- to decide whether a lane's recipes get per-recipe lines or one
+    -- "not scheduled" rollup.
+    setupFailed p = case lookup p setupOutcomes of
+      Just (Just Succeeded) -> False
+      Just _ -> True
+      Nothing -> False -- no setup node at all (local lane): recipes run as normal
+
+    -- Recipes grouped by platform, preserving Map's ascending order
+    -- for stable rendering across runs.
+    recipesByPlatform :: Map.Map Platform [(RecipeName, Maybe RecipeOutcome)]
+    recipesByPlatform =
+      Map.fromListWith (flip (<>)) [(p, [(r, o)]) | (r, p, o) <- recipeOutcomes]
+
+    -- Setup section: omitted if no setup nodes exist.
+    setupSection
+      | null setupOutcomes = []
+      | otherwise =
+          ["  Setup"]
+            <> [ "    " <> pad setupPlatWidth (display p) <> "  " <> pad setupHostWidth (mkHost (SetupNode p)) <> "  " <> renderOutcome o
+               | (p, o) <- setupOutcomes
+               ]
+            <> [""]
+
+    -- Recipes section: per-lane sub-blocks.
+    recipeSection
+      | null recipeOutcomes = []
+      | otherwise = ["  Recipes"] <> concatMap renderLane (Map.toAscList recipesByPlatform)
+
+    renderLane (plat, recipes)
+      | setupFailed plat =
+          ["    " <> display plat <> " (" <> mkHost (SetupNode plat) <> "):"]
+            <> ["      not scheduled (setup failed)"]
+      | otherwise =
+          ["    " <> display plat <> " (" <> mkHost (firstNode recipes plat) <> "):"]
+            <> [ "      " <> pad (recipeNameWidth recipes) (display r) <> "  " <> renderOutcome o
+               | (r, o) <- recipes
+               ]
+      where
+        firstNode ((r, _) : _) p = RecipeNode r p
+        firstNode [] p = SetupNode p -- defensive; empty lane shouldn't happen
+
+    -- Column-width helpers.
+    setupPlatWidth = maximum (0 : [T.length (display p) | (p, _) <- setupOutcomes])
+    setupHostWidth = maximum (0 : [T.length (mkHost (SetupNode p)) | (p, _) <- setupOutcomes])
+    recipeNameWidth rs = maximum (0 : [T.length (display r) | (r, _) <- rs])
     pad w t = t <> T.replicate (w - T.length t) " "
+
     renderOutcome (Just o) = display o
     renderOutcome Nothing = "did not run"
-    nodeLine (n, h, o) = "  " <> pad nodeWidth n <> "  " <> pad hostWidth h <> "  " <> renderOutcome o
+
+    -- Bottom-line tally counts every scheduled node (setup + recipes)
+    -- that didn't reach 'Just Succeeded'.
+    totalCount = Map.size outcomes
+    failedCount = Map.size (Map.filter (/= Just Succeeded) outcomes)
     verdictLine
-      | failedCount == 0 = "all " <> tshow (length entries) <> " nodes succeeded"
+      | failedCount == 0 = "all " <> tshow totalCount <> " nodes succeeded"
       | otherwise =
           tshow failedCount
             <> " of "
-            <> tshow (length entries)
+            <> tshow totalCount
             <> " nodes did not succeed"
     tshow = T.pack . show

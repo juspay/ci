@@ -22,9 +22,7 @@ import System.Exit (ExitCode (..))
 import Test.Hspec
 
 -- | Convenience: build a X86_64Linux-lane 'RecipeNode' from a bare
--- recipe-name string literal. 'CI.Justfile.RecipeName' has
--- 'IsString', so the argument under @-XOverloadedStrings@
--- disambiguates correctly.
+-- recipe-name string literal.
 nodeLinux :: RecipeName -> NodeId
 nodeLinux r = RecipeNode r X86_64Linux
 
@@ -47,54 +45,73 @@ spec = do
       verdictCode Map.empty `shouldBe` ExitSuccess
 
   describe "verdictSummary" $ do
-    it "lists every node in the summary lines" $ do
-      let nodes = [(nodeLinux "alpha", Just Succeeded), (nodeLinux "beta", Just Failed), (nodeLinux "gamma", Nothing)]
-          joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
-      for_ nodes $ \(n, _) ->
-        (display n `T.isInfixOf` joined) `shouldBe` True
+    let summary = T.unlines . verdictSummary (const "local") . Map.fromList
 
-    it "renders Nothing as 'did not run'" $ do
-      let nodes = [(nodeLinux "alpha", Nothing)]
-          joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
+    it "lists every recipe in the summary" $ do
+      let nodes = [(nodeLinux "alpha", Just Succeeded), (nodeLinux "beta", Just Failed)]
+          joined = summary nodes
+      for_ nodes $ \(RecipeNode r _, _) ->
+        (display r `T.isInfixOf` joined) `shouldBe` True
+
+    it "renders Nothing as 'did not run' when the lane's setup is fine" $ do
+      let joined = summary [(nodeLinux "alpha", Nothing)]
       ("did not run" `T.isInfixOf` joined) `shouldBe` True
 
-    it "shows the platform suffix in each summary line" $ do
+    it "groups recipes by platform lane" $ do
       let nodes = [(RecipeNode "alpha" X86_64Linux, Just Succeeded), (RecipeNode "alpha" Aarch64Darwin, Just Failed)]
-          joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
-      ("alpha@x86_64-linux" `T.isInfixOf` joined) `shouldBe` True
-      ("alpha@aarch64-darwin" `T.isInfixOf` joined) `shouldBe` True
+          joined = summary nodes
+      ("x86_64-linux (local)" `T.isInfixOf` joined) `shouldBe` True
+      ("aarch64-darwin (local)" `T.isInfixOf` joined) `shouldBe` True
 
-    -- Synthetic setup nodes (per-platform bundle ship / drv copy) are
-    -- internal plumbing and must not appear in the user-facing
-    -- summary — matching 'CI.CommitStatus.seedPending' /
-    -- 'postStatusFor', which already skip them from GH posts.
-    it "omits setup nodes from the per-node lines" $ do
+    it "shows setup nodes in their own Setup section" $ do
       let nodes =
             [ (SetupNode X86_64Linux, Just Succeeded),
               (RecipeNode "build" X86_64Linux, Just Succeeded)
             ]
-          joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
-      ("_ci-setup" `T.isInfixOf` joined) `shouldBe` False
-      ("build@x86_64-linux" `T.isInfixOf` joined) `shouldBe` True
+          joined = summary nodes
+      ("Setup" `T.isInfixOf` joined) `shouldBe` True
+      ("x86_64-linux" `T.isInfixOf` joined) `shouldBe` True
 
-    it "omits setup nodes from the n-of-m count" $ do
+    it "omits the Setup section when there are no setup nodes" $ do
+      let joined = summary [(nodeLinux "build", Just Succeeded)]
+      ("Setup" `T.isInfixOf` joined) `shouldBe` False
+
+    it "collapses a lane to 'not scheduled (setup failed)' when its setup failed" $ do
+      let nodes =
+            [ (SetupNode X86_64Linux, Just Failed),
+              (RecipeNode "build" X86_64Linux, Nothing),
+              (RecipeNode "test" X86_64Linux, Nothing)
+            ]
+          joined = summary nodes
+      ("not scheduled (setup failed)" `T.isInfixOf` joined) `shouldBe` True
+      -- Individual recipe outcomes are suppressed under a failed lane.
+      ("build  did not run" `T.isInfixOf` joined) `shouldBe` False
+
+    it "renders per-recipe outcomes for lanes whose setup succeeded" $ do
+      let nodes =
+            [ (SetupNode Aarch64Darwin, Just Succeeded),
+              (RecipeNode "build" Aarch64Darwin, Just Succeeded),
+              (RecipeNode "test" Aarch64Darwin, Just Failed)
+            ]
+          joined = summary nodes
+      ("build" `T.isInfixOf` joined) `shouldBe` True
+      ("succeeded" `T.isInfixOf` joined) `shouldBe` True
+      ("failed" `T.isInfixOf` joined) `shouldBe` True
+      ("not scheduled" `T.isInfixOf` joined) `shouldBe` False
+
+    it "counts every scheduled node (setup + recipes) in the bottom tally" $ do
       let nodes =
             [ (SetupNode X86_64Linux, Just Succeeded),
               (RecipeNode "build" X86_64Linux, Just Succeeded),
               (RecipeNode "test" X86_64Linux, Just Succeeded)
             ]
-          joined = T.unlines $ verdictSummary (const "local") $ Map.fromList nodes
-      -- Two user recipes, not three (setup omitted).
-      ("all 2 nodes succeeded" `T.isInfixOf` joined) `shouldBe` True
+          joined = summary nodes
+      ("all 3 nodes succeeded" `T.isInfixOf` joined) `shouldBe` True
 
   -- Cross-module invariant: the two consumers of 'TerminalStatus'
   -- ('terminalToOutcome' in CI.Verdict, 'terminalToCommitStatus' in
   -- CI.CommitStatus) must agree on which terminal classification
-  -- counts as "success". Without this, adding a new 'TerminalStatus'
-  -- constructor and updating only one consumer would compile cleanly
-  -- and produce a green GitHub check beside a red local exit (or
-  -- vice versa). 'Bounded'/'Enum' on 'TerminalStatus' makes the
-  -- enumeration future-proof against new constructors.
+  -- counts as "success".
   describe "TerminalStatus" $
     it "terminalToOutcome and terminalToCommitStatus agree on the success case" $
       for_ [minBound .. maxBound :: TerminalStatus] $ \ts ->
