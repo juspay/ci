@@ -26,7 +26,6 @@ module CI.Justfile
     fetchDump,
     parseDump,
     recipeCommand,
-    justBin,
   )
 where
 
@@ -47,11 +46,9 @@ import GHC.Generics (Generic)
 import System.Which (staticWhich)
 
 -- | Absolute path to the @just@ binary, baked in at compile time via Nix.
--- The same @\/nix\/store\/...just\/bin\/just@ path is what 'recipeCommand'
--- emits, and what "CI.Transport" copies into the remote's Nix store via
--- @nix-store --export | <runner> nix-store --import@ before invoking it
--- on an SSH/pu target — that way the binary is guaranteed available at
--- its full path regardless of what's on the remote's PATH.
+-- Not exported: every just shell-out in the project goes through one of
+-- the typed operations below ('recipeCommand', or 'CI.Nix.realisedJust'
+-- for remote lanes).
 justBin :: FilePath
 justBin = $(staticWhich "just")
 
