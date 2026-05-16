@@ -1,19 +1,15 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Per-node shell-command builders for the three valid combinations of
--- (where it runs) × (what it runs):
+-- | Per-node shell-command builders for remote SSH lanes:
 --
---   * 'localRecipeCommand' — recipe in the orchestrator's worktree.
 --   * 'sshRecipeCommand' — recipe in a remote's cached checkout.
 --   * 'sshSetupCommand' — the per-platform drv-copy + bundle + clone.
 --
--- The fourth combination — "local + setup" — is structurally absent
--- (there is no @localSetupCommand@), so the historical "(Local,
--- SetupNode) is a runtime error" branch can't be written. Each
--- function takes only the arguments its combination needs, and the
--- caller ('CI.Pipeline.commandForNode') dispatches by pattern match on
--- 'NodeId' + the host lookup it already performed.
+-- Local recipes use 'CI.Justfile.recipeCommand' directly (no SSH
+-- plumbing needed — process-compose's @working_dir@ already pins the
+-- snapshot). The caller ('CI.Pipeline.commandForNode') dispatches by
+-- pattern match on 'NodeId' + the host lookup it already performed.
 --
 -- Remote setup nodes ship the @just@ derivation, bundle @HEAD@
 -- across, and clone into
@@ -33,7 +29,6 @@
 -- @~\/.ssh\/config@ (incus instances are reached via an ssh alias).
 module CI.Transport
   ( -- * Command builders
-    localRecipeCommand,
     sshSetupCommand,
     sshRecipeCommand,
 
@@ -44,19 +39,13 @@ where
 
 import CI.Git (Sha)
 import CI.Hosts (Host)
-import CI.Justfile (RecipeName, recipeCommand)
+import CI.Justfile (RecipeName)
 import CI.LogPath (shortShaLen)
 import CI.Nix (realisedJust, shipJustDrv)
 import CI.Platform (Platform)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Text.Display (display)
-
--- | Recipe command in the orchestrator's worktree: bare @just
--- --no-deps \<recipe\>@. process-compose's @working_dir@ already
--- points at the pinned snapshot, so no @cd@ is needed.
-localRecipeCommand :: RecipeName -> Text
-localRecipeCommand = recipeCommand
 
 -- | Setup-node command. Ships the @just@ derivation, then bundles
 -- @HEAD@ across and clones into 'cachedRunDir'. Idempotent: if the

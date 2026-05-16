@@ -1,15 +1,17 @@
 {-# LANGUAGE OverloadedStrings #-}
 
--- | Tests for "CI.Transport"'s three command builders and runner
--- prefix. The end-to-end bundle+clone+run path is exercised by the
+-- | Tests for "CI.Transport"'s SSH command builders and runner prefix.
+-- 'CI.Justfile.recipeCommand' covers local recipe commands (no SSH plumbing).
+-- The end-to-end bundle+clone+run path is exercised by the
 -- @ci::run-check@ smoke test in @ci.just@; this spec locks down the
 -- structural choices in isolation.
 module CI.TransportSpec (spec) where
 
 import CI.Git (shaPlaceholder)
 import CI.Hosts (hostFromText)
+import CI.Justfile (recipeCommand)
 import CI.Platform (Platform (..))
-import CI.Transport (localRecipeCommand, remoteRunner, sshRecipeCommand, sshSetupCommand)
+import CI.Transport (remoteRunner, sshRecipeCommand, sshSetupCommand)
 import qualified Data.Text as T
 import Test.Hspec
 
@@ -25,9 +27,9 @@ spec = do
     it "treats an ssh-config alias the same — anything ssh dials works" $
       remoteRunner (hostFromText "srid1") `shouldBe` "ssh -T srid1"
 
-  describe "localRecipeCommand" $ do
+  describe "recipeCommand" $ do
     it "emits a bare just --no-deps invocation (pc working_dir handles the cwd)" $
-      ("--no-deps ci::build" `T.isInfixOf` localRecipeCommand "ci::build") `shouldBe` True
+      ("--no-deps ci::build" `T.isInfixOf` recipeCommand "ci::build") `shouldBe` True
 
   describe "sshSetupCommand" $ do
     let host = hostFromText "remote.example.com"
