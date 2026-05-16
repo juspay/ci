@@ -306,14 +306,17 @@ buildProcessCompose mode = do
       -- divergence risk of two near-identical "is this platform
       -- remote?" predicates.
       hasRemote = any (\p -> isRemote p (localPlat, hosts)) pipelinePlatforms
-  -- @DumpRun@ skips @resolveSha@ and the SSH branch falls back to
-  -- 'shaPlaceholder' so @dump-yaml@ works outside a git checkout.
-  remoteLaneState <- case mode of
-    DumpRun -> pure (RemoteLanes shaPlaceholder)
-    _
-      | hasRemote -> RemoteLanes <$> (dieOnLeft =<< resolveSha)
-      | otherwise -> pure NoRemoteLanes
-  let mkCommand = commandForNode remoteLaneState localPlat hosts
+  -- A Sha is needed iff at least one remote lane is fanned out
+  -- (setup nodes ship a bundle that gets @git checkout@'d on the
+  -- remote at this SHA). @DumpRun@ uses 'shaPlaceholder' so
+  -- inspection works outside a git checkout; non-remote local runs
+  -- also use the placeholder (never consumed — the graph has no
+  -- nodes that read it).
+  sha <- case mode of
+    DumpRun -> pure shaPlaceholder
+    _ | hasRemote -> dieOnLeft =<< resolveSha
+    _ -> pure shaPlaceholder
+  let mkCommand = commandForNode sha localPlat hosts
       (yamlWorkingDir, yamlLogLocation) = yamlPathsFor mode
   pure $ toProcessCompose mkCommand yamlWorkingDir yamlLogLocation nodeGraph
 
@@ -394,24 +397,20 @@ isRemote :: Platform -> (Platform, Hosts) -> Bool
 isRemote p (localPlat, hosts) =
   isJust (lookupHost p hosts) || p /= localPlat
 
--- | Orchestrator-side branching: do we have a SHA to clone on the
--- remote, or are all lanes inline? @DumpRun@ short-circuits to
--- @RemoteLanes shaPlaceholder@ so inspection works outside a git
--- checkout; real runs hit @resolveSha@ when at least one lane is
--- remote.
-data RemoteLaneState = NoRemoteLanes | RemoteLanes Sha
-
 -- | Per-node command construction. Picks the transport from what the
 -- orchestrator already knows (hosts.json entry → SSH; bare local
 -- platform → 'Local') and hands the typed 'NodeId' to
 -- 'CI.Transport.commandFor', which pattern-matches the kind
 -- structurally — no parallel @CommandShape@ sum, no
 -- @isSetupNode@-derived branch.
-commandForNode :: RemoteLaneState -> Platform -> Hosts -> NodeId -> T.Text
-commandForNode remoteLaneState localPlat hosts node = case lookupHost plat hosts of
-  Just h -> case remoteLaneState of
-    RemoteLanes sha -> commandFor (Ssh h sha plat) node
-    NoRemoteLanes -> shaContractError
+--
+-- @sha@ is consumed only by the SSH branch (setup nodes embed it in
+-- the remote @git checkout@, recipe nodes target the cached checkout
+-- at that SHA). Local-mode runs without remote lanes still pass
+-- 'shaPlaceholder' for typesetting purposes — it's never read.
+commandForNode :: Sha -> Platform -> Hosts -> NodeId -> T.Text
+commandForNode sha localPlat hosts node = case lookupHost plat hosts of
+  Just h -> commandFor (Ssh h sha plat) node
   Nothing
     | plat == localPlat -> commandFor Local node
     | otherwise -> hostContractError
@@ -422,11 +421,6 @@ commandForNode remoteLaneState localPlat hosts node = case lookupHost plat hosts
         "internal error: no SSH host for "
           <> T.unpack (display plat)
           <> " (pipelinePlatformsFor should have excluded this)"
-    shaContractError =
-      error $
-        "internal error: hosts entry for "
-          <> T.unpack (display plat)
-          <> " but no SHA resolved (buildProcessCompose hasRemote logic broken)"
 
 -- | Build the @NodeId -> host-label@ resolver the verdict summary
 -- prints. Loads @~\/.config\/ci\/hosts.json@ once and closes over
